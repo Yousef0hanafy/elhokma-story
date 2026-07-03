@@ -107,6 +107,33 @@
   </aside>
   <div class="notes-backdrop" id="notes-backdrop" aria-hidden="true"></div>
 
+  <!-- ===== TTS ACTIVATION OVERLAY (first scene) ===== -->
+  <div class="tts-activation" id="tts-activation" aria-hidden="true">
+    <div class="tts-activation-card">
+      <div class="tts-activation-icon">
+        <svg viewBox="0 0 60 60" width="48" height="48">
+          <circle cx="30" cy="30" r="28" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"/>
+          <path d="M 18 22 L 26 22 L 34 16 L 34 44 L 26 38 L 18 38 Z" fill="currentColor"/>
+          <path d="M 40 24 Q 44 30 40 36" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+          <path d="M 44 20 Q 50 30 44 40" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="tts-activation-title" id="tts-activation-title">السرد الصوتي العربي</div>
+      <div class="tts-activation-desc" id="tts-activation-desc">
+        لتجربة كاملة مع صوت د. سارة، فعّل السرد الصوتي. يمكنك أيضاً المتابعة بالترجمة النصية فقط.
+      </div>
+      <div class="tts-activation-buttons">
+        <button class="tts-activation-btn tts-activation-primary" id="tts-activate-btn" type="button">
+          <span>🔊 فعّل السرد الصوتي</span>
+        </button>
+        <button class="tts-activation-btn tts-activation-secondary" id="tts-skip-btn" type="button">
+          <span>المتابعة بدون صوت</span>
+        </button>
+      </div>
+      <div class="tts-activation-status" id="tts-activation-status"></div>
+    </div>
+  </div>
+
   <!-- ===== TOAST ===== -->
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 

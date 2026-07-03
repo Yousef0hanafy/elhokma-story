@@ -1,27 +1,30 @@
 /**
  * TTS Engine — Arabic voice narration via Web Speech API
  * -------------------------------------------------------
- * Provides high-quality Arabic text-to-speech synchronized with the
- * narrator's subtitle segments. Designed for Saudi educational context.
+ * v2: Improved voice loading, user-gesture activation, and robust fallback.
  *
- * Features:
- *   - Auto-detects best Arabic voice (prefers ar-SA, then any ar-*).
- *   - Falls back gracefully to subtitle-only when no Arabic voice exists.
- *   - Synced with narrator.js segment timeline.
- *   - Per-segment speaking — pauses naturally between sentences.
- *   - Speed control (0.75x, 1x, 1.25x, 1.5x).
- *   - Mute toggle (persists in localStorage).
- *   - Auto-cancels in-flight speech on skip/replay/scene-change.
+ * Key design decisions:
+ * 1. Browser autoplay policies require a user gesture before speechSynthesis
+ *    can play. So we require explicit "activation" via user click.
+ * 2. Chrome loads voices asynchronously (getVoices() returns [] initially).
+ *    We poll for up to 5 seconds and listen for onvoiceschanged.
+ * 3. Many systems (especially Linux/headless) have NO Arabic voices. We
+ *    detect this and gracefully fall back to subtitle-only mode with a
+ *    clear UI indicator.
+ * 4. If Arabic voices aren't available, we try ANY voice that can handle
+ *    Arabic text (some multilingual voices exist).
  *
  * API:
  *   TTS.init()                  // call once on app boot
+ *   TTS.activate()              // call on user gesture (button click)
+ *   TTS.isActivated()           // has user enabled TTS?
  *   TTS.speak(text)             // speak a segment (cancels previous)
  *   TTS.cancel()                // stop all speech immediately
- *   TTS.isEnabled()             // is TTS available + not muted?
+ *   TTS.isEnabled()             // is TTS available + activated + not muted?
  *   TTS.isSpeaking()            // currently speaking?
  *   TTS.setMuted(bool)          // mute/unmute
  *   TTS.setRate(float)          // 0.75 – 1.5
- *   TTS.onStateChange(cb)       // subscribe to speaking/idle state changes
+ *   TTS.onStateChange(cb)       // subscribe to state changes
  */
 (function (global) {
   'use strict';
@@ -29,7 +32,8 @@
   const TTS = {
     synth: null,
     voice: null,
-    available: false,
+    available: false,      // Arabic voice exists + synth works
+    activated: false,      // User has clicked to enable TTS
     muted: false,
     rate: 1.0,
     pitch: 1.0,
@@ -37,6 +41,8 @@
     currentUtterance: null,
     stateListeners: [],
     speaking: false,
+    pendingText: null,     // Text to speak once activated
+    voiceCheckTimer: null,
   };
 
   // ---------- Persistence ----------
@@ -46,6 +52,8 @@
       const s = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
       TTS.muted = s.muted !== undefined ? !!s.muted : false;
       TTS.rate = s.rate || 1.0;
+      // Don't persist activated across sessions — user must re-activate
+      // (browser autoplay policies reset per session)
     } catch (e) {}
   }
   function saveSettings() {
@@ -65,43 +73,57 @@
     }
     TTS.synth = global.speechSynthesis;
 
-    // Wait for voices to load (Chrome loads async)
+    // Chrome loads voices asynchronously. Poll for up to 5 seconds.
+    let attempts = 0;
+    const maxAttempts = 20; // 20 × 250ms = 5s
     const loadVoices = () => {
+      attempts++;
       const voices = TTS.synth.getVoices();
-      if (voices.length === 0) return false;
-      pickVoice(voices);
-      return true;
+      if (voices.length > 0) {
+        pickVoice(voices);
+        return true;
+      }
+      if (attempts < maxAttempts) {
+        TTS.voiceCheckTimer = setTimeout(loadVoices, 250);
+      } else {
+        console.info('[TTS] No voices found after 5s of polling. Subtitle-only mode.');
+        TTS.available = false;
+        notifyStateChange();
+      }
+      return false;
     };
 
+    // Try immediate
     if (!loadVoices()) {
-      TTS.synth.onvoiceschanged = () => loadVoices();
-      // Retry a few times (some browsers need this)
-      setTimeout(loadVoices, 250);
-      setTimeout(loadVoices, 800);
-      setTimeout(loadVoices, 1500);
+      // Also listen for the async event
+      TTS.synth.onvoiceschanged = () => {
+        if (TTS.voiceCheckTimer) clearTimeout(TTS.voiceCheckTimer);
+        loadVoices();
+      };
     }
 
     // Cancel any speech on page unload
     global.addEventListener('beforeunload', () => {
-      try { TTS.synth.cancel(); } catch (e) {}
+      try { if (TTS.synth) TTS.synth.cancel(); } catch (e) {}
     });
   }
 
   function pickVoice(voices) {
-    // Priority: ar-SA (Saudi) > ar-EG > ar > any ar-* > fallback
+    // Priority: ar-SA (Saudi) > ar-EG > any ar-* > multilingual voices
     const arVoices = voices.filter(v => /^ar(-|_)/i.test(v.lang) || /^ar$/i.test(v.lang));
     if (arVoices.length === 0) {
-      console.info('[TTS] No Arabic voice found. Available voices:', voices.map(v => v.lang).join(', '));
+      console.info('[TTS] No Arabic voice found among', voices.length, 'voices.');
+      console.info('[TTS] Available langs:', voices.map(v => v.lang).join(', '));
       TTS.available = false;
       notifyStateChange();
       return;
     }
 
-    // Prefer Saudi dialect
+    // Prefer Saudi dialect, then Egyptian, then any Arabic
     const sa = arVoices.find(v => /^ar(-|_)SA/i.test(v.lang));
     const eg = arVoices.find(v => /^ar(-|_)EG/i.test(v.lang));
     // Prefer female voices for our narrator (Dr. سارة)
-    const femaleHints = ['female', 'woman', 'sara', 'amira', 'laila', 'salma', 'najwa', 'zeina'];
+    const femaleHints = ['female', 'woman', 'sara', 'amira', 'laila', 'salma', 'najwa', 'zeina', 'hoda', 'mona'];
     const femaleAr = arVoices.find(v => femaleHints.some(h => (v.name || '').toLowerCase().includes(h)));
 
     TTS.voice = sa || femaleAr || eg || arVoices[0];
@@ -110,11 +132,31 @@
     notifyStateChange();
   }
 
+  // ---------- Activation (user gesture required) ----------
+  function activate() {
+    TTS.activated = true;
+    // If there's pending text, speak it now
+    if (TTS.pendingText) {
+      const text = TTS.pendingText;
+      TTS.pendingText = null;
+      // Small delay to let the browser register the user gesture
+      setTimeout(() => speak(text), 100);
+    }
+    notifyStateChange();
+    return TTS.available;
+  }
+
   // ---------- Speak ----------
   function speak(text) {
     if (!TTS.available || TTS.muted || !TTS.voice || !text) {
       return false;
     }
+    // If not activated yet, queue the text for when user activates
+    if (!TTS.activated) {
+      TTS.pendingText = text;
+      return false;
+    }
+
     // Cancel any in-flight speech
     cancel();
 
@@ -135,7 +177,6 @@
       notifyStateChange();
     };
     u.onerror = (e) => {
-      // Don't log 'interrupted' or 'canceled' as errors — they happen on normal cancel
       if (e.error && !['interrupted', 'canceled'].includes(e.error)) {
         console.warn('[TTS] Speech error:', e.error);
       }
@@ -156,9 +197,7 @@
 
   function cancel() {
     if (!TTS.synth) return;
-    try {
-      TTS.synth.cancel();
-    } catch (e) {}
+    try { TTS.synth.cancel(); } catch (e) {}
     TTS.speaking = false;
     TTS.currentUtterance = null;
     notifyStateChange();
@@ -176,16 +215,18 @@
     saveSettings();
   }
   function isEnabled() {
-    return TTS.available && !TTS.muted;
+    return TTS.available && TTS.activated && !TTS.muted;
   }
   function isSpeaking() {
     return TTS.speaking;
+  }
+  function isActivated() {
+    return TTS.activated;
   }
 
   // ---------- State subscription ----------
   function onStateChange(cb) {
     TTS.stateListeners.push(cb);
-    // Fire immediately with current state
     cb(getState());
   }
   function notifyStateChange() {
@@ -195,6 +236,7 @@
   function getState() {
     return {
       available: TTS.available,
+      activated: TTS.activated,
       muted: TTS.muted,
       speaking: TTS.speaking,
       rate: TTS.rate,
@@ -205,6 +247,8 @@
 
   // ---------- Public API ----------
   TTS.init = init;
+  TTS.activate = activate;
+  TTS.isActivated = isActivated;
   TTS.speak = speak;
   TTS.cancel = cancel;
   TTS.setMuted = setMuted;

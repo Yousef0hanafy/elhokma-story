@@ -58,6 +58,10 @@
       }
       // Start first scene
       renderScene(state.currentScreen);
+      // Show TTS activation overlay after first scene renders (only if starting fresh)
+      if (state.currentScreen === 0) {
+        maybeShowTTSActivation();
+      }
     }, 1400);
   }
 
@@ -234,38 +238,49 @@
     const ttsIcon = document.getElementById('tts-icon');
     const ttsRateLabel = document.getElementById('tts-rate-label');
 
+    // Activation overlay buttons
+    const activateBtn = document.getElementById('tts-activate-btn');
+    const skipBtn = document.getElementById('tts-skip-btn');
+    const activationOverlay = document.getElementById('tts-activation');
+    const activationStatus = document.getElementById('tts-activation-status');
+    const activationTitle = document.getElementById('tts-activation-title');
+    const activationDesc = document.getElementById('tts-activation-desc');
+
     if (!window.TTS) return;
 
+    // Update topbar TTS button based on state
     TTS.onStateChange(s => {
       if (!ttsToggle) return;
       ttsToggle.disabled = !s.available;
-      ttsToggle.classList.toggle('muted', s.muted || !s.available);
+      ttsToggle.classList.toggle('muted', s.muted || !s.available || !s.activated);
       if (ttsIcon) {
         if (!s.available) ttsIcon.textContent = '🔇';
+        else if (!s.activated) ttsIcon.textContent = '🔈';
         else if (s.muted) ttsIcon.textContent = '🔈';
+        else if (s.speaking) ttsIcon.textContent = '🔊';
         else ttsIcon.textContent = '🔊';
       }
     });
 
+    // Topbar TTS toggle — if not activated, show activation overlay; else mute/unmute
     if (ttsToggle) {
       ttsToggle.addEventListener('click', () => {
         const s = TTS.getState();
         if (!s.available) {
-          showToast('السرد الصوتي غير متاح في هذا المتصفح', 'error');
+          showTTSActivationOverlay('unavailable');
           return;
         }
-        TTS.setMuted(!s.muted);
-        if (s.muted) {
-          // Was muted, now unmuting — no auto-replay (user can use ↺)
-          showToast('تم تفعيل السرد الصوتي', 'success');
-        } else {
-          // Was unmuted, now muting
-          TTS.cancel();
-          showToast('تم كتم السرد الصوتي', 'success');
+        if (!s.activated) {
+          showTTSActivationOverlay();
+          return;
         }
+        // Toggle mute
+        TTS.setMuted(!s.muted);
+        showToast(s.muted ? 'تم تفعيل السرد الصوتي' : 'تم كتم السرد الصوتي', s.muted ? 'success' : 'success');
       });
     }
 
+    // Speed control
     if (ttsRate) {
       const rates = [0.75, 1.0, 1.25, 1.5];
       const rateLabels = ['٠.٧٥×', '١×', '١.٢٥×', '١.٥×'];
@@ -282,6 +297,93 @@
         showToast(`سرعة السرد: ${rateLabels[nextIdx]}`, 'success');
       });
     }
+
+    // Activation overlay handlers
+    if (activateBtn) {
+      activateBtn.addEventListener('click', () => {
+        const s = TTS.getState();
+        if (!s.available) {
+          // No Arabic voice — proceed without TTS
+          hideTTSActivationOverlay();
+          showToast('السرد الصوتي غير متاح، المتابعة بالترجمة النصية', 'warning');
+          return;
+        }
+        // Activate TTS (this is the user gesture)
+        TTS.activate();
+        hideTTSActivationOverlay();
+        showToast('تم تفعيل السرد الصوتي', 'success');
+        // If we're on scene 1 and narration already started, re-trigger current segment
+        // The narrator.js will handle speaking via onSegment callback
+        // But if narration already passed, we may need to restart it
+        if (state.currentScreen === 0 && Narrator.isComplete) {
+          // Narration already done — no auto-replay, user can use ↺
+        }
+      });
+    }
+
+    if (skipBtn) {
+      skipBtn.addEventListener('click', () => {
+        hideTTSActivationOverlay();
+        showToast('المتابعة بالترجمة النصية', 'success');
+      });
+    }
+  }
+
+  // ---------- TTS Activation Overlay ----------
+  function showTTSActivationOverlay(mode) {
+    const overlay = document.getElementById('tts-activation');
+    const status = document.getElementById('tts-activation-status');
+    const title = document.getElementById('tts-activation-title');
+    const desc = document.getElementById('tts-activation-desc');
+    const activateBtn = document.getElementById('tts-activate-btn');
+
+    if (!overlay) return;
+
+    // Check TTS availability
+    const s = window.TTS ? TTS.getState() : { available: false };
+
+    if (mode === 'unavailable' || !s.available) {
+      // No Arabic voice available
+      title.textContent = 'السرد الصوتي غير متاح';
+      desc.textContent = 'متصفحك لا يدعم السرد الصوتي العربي. ستظهر الترجمة النصية تلقائياً. يمكنك المتابعة دون صوت.';
+      if (activateBtn) activateBtn.style.display = 'none';
+      if (status) {
+        status.textContent = 'يمكنك المتابعة بالنقر على الزر أدناه';
+        status.className = 'tts-activation-status';
+      }
+    } else {
+      title.textContent = 'السرد الصوتي العربي';
+      desc.textContent = 'لتجربة كاملة مع صوت د. سارة، فعّل السرد الصوتي. يمكنك أيضاً المتابعة بالترجمة النصية فقط.';
+      if (activateBtn) activateBtn.style.display = '';
+      if (status) {
+        status.textContent = `الصوت المتاح: ${s.voiceName || 'عربي'} (${s.voiceLang || 'ar'})`;
+        status.className = 'tts-activation-status';
+      }
+    }
+
+    overlay.classList.add('visible');
+    overlay.setAttribute('aria-hidden', 'false');
+  }
+
+  function hideTTSActivationOverlay() {
+    const overlay = document.getElementById('tts-activation');
+    if (!overlay) return;
+    overlay.classList.remove('visible');
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+
+  // Check if TTS activation overlay should be shown (only once, on first scene)
+  let ttsActivationShown = false;
+  function maybeShowTTSActivation() {
+    if (ttsActivationShown) return;
+    if (!window.TTS) return;
+    const s = TTS.getState();
+    if (s.activated) return; // Already activated
+    // Show overlay after a short delay (let scene render first)
+    setTimeout(() => {
+      showTTSActivationOverlay();
+      ttsActivationShown = true;
+    }, 800);
   }
 
   // ---------- Narrator avatar (inline SVG) ----------
@@ -450,6 +552,9 @@
     const stage = $stage();
     Animator.fadeOut(stage, 0.4, () => {
       stage.innerHTML = '';
+      // Reset scroll position so new scene starts at the top
+      stage.scrollTop = 0;
+      window.scrollTo(0, 0);
       $ctaZone().innerHTML = '';
       $ctaZone().classList.add('empty');
       Narrator.hideNarrator();
@@ -750,6 +855,10 @@
       // Restore assessment if answered
       if (state.assessmentAnswered) {
         showAssessmentAnswer(scene);
+      } else if (state.exploredSeats.length === 6) {
+        // All seats explored but not yet answered — show + enable assessment
+        document.getElementById('assessment-panel').classList.add('visible');
+        enableBoardroomAssessment(scene);
       }
     } else {
       Animator.runTimeline(tl);
@@ -914,12 +1023,18 @@
               renderScene(state.currentScreen);
             }
           } else {
-            // Reset assessment for retry
+            // Reset assessment IN PLACE (no full re-render) for robust recovery
+            // Boardroom uses state.assessmentAnswer/assessmentAnswered (legacy),
+            // so we reset those plus call the generic in-place reset.
             state.assessmentAnswer = null;
             state.assessmentAnswered = false;
-            saveState();
-            // Re-render scene
-            renderScene(state.currentScreen);
+            // Also ensure sceneState exists for boardroom so resetAssessmentInPlace works
+            if (!state.sceneState[state.currentScreen]) {
+              state.sceneState[state.currentScreen] = { explored: state.exploredSeats.slice(), answered: false, answer: null, narrationCompleted: true };
+            }
+            state.sceneState[state.currentScreen].answered = false;
+            state.sceneState[state.currentScreen].answer = null;
+            resetAssessmentInPlace(scene);
           }
         });
       }, 100);
@@ -1054,7 +1169,13 @@
         if (el) el.classList.add('completed');
       });
       updateFrameworkProgress(scene);
-      if (ss.answered) showFrameworkAssessment(scene);
+      if (ss.answered) {
+        showFrameworkAssessment(scene);
+      } else if (ss.explored.length === scene.layers.length) {
+        // All explored but not yet answered — show + enable assessment
+        document.getElementById('assessment-panel').classList.add('visible');
+        enableAssessment(scene, 'framework');
+      }
     } else {
       Animator.runTimeline(tl);
     }
@@ -1276,7 +1397,13 @@
         if (el) el.classList.add('expanded');
       });
       updatePillarsProgress(scene);
-      if (ss.answered) showPillarsAssessment(scene);
+      if (ss.answered) {
+        showPillarsAssessment(scene);
+      } else if (ss.explored.length === 2) {
+        // Both pillars explored but not yet answered — show + enable assessment
+        document.getElementById('assessment-panel').classList.add('visible');
+        enableAssessment(scene, 'pillars');
+      }
     } else {
       Animator.runTimeline(tl);
     }
@@ -1699,7 +1826,13 @@
         if (el) el.classList.add('completed');
       });
       updateIntegrityProgress(scene);
-      if (ss.answered) showIntegrityAssessment(scene);
+      if (ss.answered) {
+        showIntegrityAssessment(scene);
+      } else if (ss.explored.length === scene.stars.length) {
+        // All stars explored but not yet answered — show + enable assessment
+        document.getElementById('assessment-panel').classList.add('visible');
+        enableAssessment(scene, 'integrity');
+      }
     } else {
       Animator.runTimeline(tl);
     }
@@ -2123,15 +2256,69 @@
               renderScene(state.currentScreen);
             }
           } else {
-            // Reset assessment for retry
-            ss.answer = null;
-            ss.answered = false;
-            saveState();
-            renderScene(state.currentScreen);
+            // Reset assessment IN PLACE (no full re-render) for robust recovery
+            resetAssessmentInPlace(scene);
           }
         });
       }, 100);
     }, 2000);
+  }
+
+  // ---------- In-place assessment reset (no re-render) ----------
+  // Used by all scenes when learner clicks "Try Again" after a wrong answer.
+  // Resets the assessment UI without re-rendering the entire scene, which
+  // avoids losing scroll position, exploration state, and animation lifecycle.
+  function resetAssessmentInPlace(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    // Reset state
+    if (ss) {
+      ss.answer = null;
+      ss.answered = false;
+    }
+    // Also reset legacy boardroom state
+    state.assessmentAnswer = null;
+    state.assessmentAnswered = false;
+    // Update score (this scene no longer correct)
+    if (state.sceneScores) state.sceneScores[state.currentScreen] = 0;
+    const scorePerScene = Math.round(100 / CONTENT.screens.length);
+    const correctScenes = Object.values(state.sceneScores).filter(v => v === 1).length;
+    const totalScore = Math.min(100, correctScenes * scorePerScene);
+    window.ScormApi.setScore(totalScore, 0, 100);
+    saveState();
+
+    // Reset UI: unlock options, remove correct/incorrect styling
+    const opts = document.querySelectorAll('#assessment-options .assessment-option');
+    opts.forEach(o => {
+      o.classList.remove('locked', 'correct', 'incorrect', 'selected');
+    });
+    // Clear feedback
+    const fb = document.getElementById('assessment-feedback');
+    if (fb) {
+      fb.className = 'assessment-feedback';
+      fb.innerHTML = '';
+    }
+    // Hide CTA
+    const ctaZone = $ctaZone();
+    ctaZone.innerHTML = '';
+    ctaZone.classList.add('empty');
+    // Ensure panel is visible
+    const panel = document.getElementById('assessment-panel');
+    if (panel) panel.classList.add('visible');
+    // Re-enable assessment with fresh click handlers
+    // Use boardroom-specific handler for scene 2, generic for others
+    if (state.currentScreen === 1) {
+      enableBoardroomAssessment(scene);
+    } else {
+      enableAssessment(scene, getCurrentSceneType());
+    }
+    // Scroll assessment into view
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showToast('حاول مرة أخرى', 'warning');
+  }
+
+  function getCurrentSceneType() {
+    const scene = CONTENT.screens[state.currentScreen];
+    return scene ? scene.id : 'unknown';
   }
 
   // ---------- Production Notes drawer ----------
