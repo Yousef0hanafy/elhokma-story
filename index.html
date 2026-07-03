@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0B1F33">
+  <title>رحلة الحوكمة — الفصل الأول</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/animations.css">
+</head>
+<body>
+
+  <!-- ===== LOADING SCREEN ===== -->
+  <div id="loader" class="loader" aria-hidden="true">
+    <div class="loader-mark">
+      <svg viewBox="0 0 80 80" width="80" height="80">
+        <circle cx="40" cy="40" r="36" fill="none" stroke="rgba(212,175,55,0.2)" stroke-width="2"/>
+        <circle cx="40" cy="40" r="36" fill="none" stroke="#D4AF37" stroke-width="2" stroke-linecap="round" stroke-dasharray="226" stroke-dashoffset="226" class="loader-ring"/>
+        <text x="40" y="50" text-anchor="middle" fill="#D4AF37" font-size="24" font-family="Tajawal" font-weight="900">ح</text>
+      </svg>
+    </div>
+    <div class="loader-text">رحلة الحوكمة</div>
+    <div class="loader-sub">يُرجى الانتظار...</div>
+  </div>
+
+  <!-- ===== LETTERBOX BARS (cinematic) ===== -->
+  <div class="letterbox letterbox-top" id="letterbox-top" aria-hidden="true"></div>
+  <div class="letterbox letterbox-bottom" id="letterbox-bottom" aria-hidden="true"></div>
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar" id="topbar" aria-hidden="true">
+    <div class="topbar-inner">
+      <button class="topbar-btn" id="notes-toggle" type="button" aria-label="ملاحظات الإنتاج">
+        <span class="topbar-icon">🎬</span>
+        <span class="topbar-label">ملاحظات الإنتاج</span>
+      </button>
+      <div class="topbar-title">رحلة الحوكمة · الفصل الأول</div>
+      <div class="topbar-scene" id="scene-counter">المشهد ١ / ٢</div>
+    </div>
+  </header>
+
+  <!-- ===== SCENE STAGE ===== -->
+  <main class="stage" id="stage" role="main" aria-live="polite">
+    <!-- Scenes render here -->
+  </main>
+
+  <!-- ===== NARRATOR OVERLAY ===== -->
+  <div class="narrator-overlay" id="narrator-overlay" aria-hidden="true">
+    <div class="narrator-avatar" id="narrator-avatar">
+      <!-- SVG narrator portrait injected here -->
+    </div>
+    <div class="narrator-wave" id="narrator-wave" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
+  </div>
+
+  <!-- ===== SUBTITLE BAR ===== -->
+  <div class="subtitle-bar" id="subtitle-bar" aria-live="polite" aria-atomic="true">
+    <div class="subtitle-text" id="subtitle-text"></div>
+    <div class="subtitle-controls">
+      <button class="sub-btn" id="replay-btn" type="button" aria-label="إعادة السرد">↺</button>
+      <button class="sub-btn" id="skip-btn" type="button" aria-label="تخطّي السرد">»</button>
+    </div>
+  </div>
+
+  <!-- ===== CTA ZONE ===== -->
+  <div class="cta-zone" id="cta-zone" aria-live="polite"></div>
+
+  <!-- ===== PRODUCTION NOTES DRAWER ===== -->
+  <aside class="notes-drawer" id="notes-drawer" aria-hidden="true" aria-labelledby="notes-title">
+    <div class="notes-header">
+      <div class="notes-title" id="notes-title">🎬 ملاحظات الإنتاج</div>
+      <button class="notes-close" id="notes-close" type="button" aria-label="إغلاق">✕</button>
+    </div>
+    <div class="notes-body" id="notes-body"></div>
+  </aside>
+  <div class="notes-backdrop" id="notes-backdrop" aria-hidden="true"></div>
+
+  <!-- ===== TOAST ===== -->
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/scorm-api.js"></script>
+  <script src="js/content.js"></script>
+  <script src="js/narrator.js"></script>
+  <script src="js/animator.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
