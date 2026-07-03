@@ -34,12 +34,20 @@
 
   // ---------- Init ----------
   function init() {
+    // Detect dev mode (?dev=1 in URL)
+    const urlParams = new URLSearchParams(window.location.search);
+    const isDev = urlParams.get('dev') === '1' || urlParams.get('dev') === 'true';
+    if (isDev) document.body.classList.add('dev-mode');
+
     window.ScormApi.init();
     loadState();
     Narrator.init();
     Animator.init();
+    if (window.TTS) TTS.init();
     buildNarratorAvatar();
     bindGlobalEvents();
+    bindNavigation();
+    bindTTSControls();
 
     // Hide loader after 1.2s (let fonts load)
     setTimeout(() => {
@@ -82,67 +90,343 @@
   }
 
   function bindGlobalEvents() {
-    // Production notes toggle
+    // Production notes toggle (dev mode only — element is hidden via CSS otherwise)
     const notesToggle = document.getElementById('notes-toggle');
     const notesDrawer = document.getElementById('notes-drawer');
     const notesBackdrop = document.getElementById('notes-backdrop');
     const notesClose = document.getElementById('notes-close');
-    notesToggle.addEventListener('click', toggleNotes);
-    notesClose.addEventListener('click', closeNotes);
-    notesBackdrop.addEventListener('click', closeNotes);
+    if (notesToggle) notesToggle.addEventListener('click', toggleNotes);
+    if (notesClose) notesClose.addEventListener('click', closeNotes);
+    if (notesBackdrop) notesBackdrop.addEventListener('click', closeNotes);
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && notesDrawer.classList.contains('visible')) closeNotes();
+      if (e.key === 'Escape') {
+        if (notesDrawer && notesDrawer.classList.contains('visible')) closeNotes();
+        const sd = document.getElementById('scene-drawer');
+        if (sd && sd.classList.contains('visible')) closeSceneDrawer();
+      }
     });
+  }
+
+  // ---------- Scene Navigation Drawer ----------
+  function bindNavigation() {
+    const menuBtn = document.getElementById('menu-toggle');
+    const closeBtn = document.getElementById('scene-drawer-close');
+    const backdrop = document.getElementById('scene-drawer-backdrop');
+    const restartBtn = document.getElementById('scene-drawer-restart');
+    if (menuBtn) menuBtn.addEventListener('click', openSceneDrawer);
+    if (closeBtn) closeBtn.addEventListener('click', closeSceneDrawer);
+    if (backdrop) backdrop.addEventListener('click', closeSceneDrawer);
+    if (restartBtn) restartBtn.addEventListener('click', restartCourse);
+  }
+
+  function openSceneDrawer() {
+    buildSceneDrawerContent();
+    document.getElementById('scene-drawer').classList.add('visible');
+    document.getElementById('scene-drawer-backdrop').classList.add('visible');
+    document.getElementById('scene-drawer').setAttribute('aria-hidden', 'false');
+  }
+
+  function closeSceneDrawer() {
+    document.getElementById('scene-drawer').classList.remove('visible');
+    document.getElementById('scene-drawer-backdrop').classList.remove('visible');
+    document.getElementById('scene-drawer').setAttribute('aria-hidden', 'true');
+  }
+
+  function buildSceneDrawerContent() {
+    const body = document.getElementById('scene-drawer-body');
+    const total = CONTENT.screens.length;
+    let html = '';
+    CONTENT.screens.forEach((scene, idx) => {
+      const isCurrent = idx === state.currentScreen;
+      const isCompleted = isSceneCompleted(idx);
+      const isUnlocked = idx <= state.currentScreen || isSceneCompleted(idx) || (idx > 0 && isSceneCompleted(idx - 1));
+      // Always allow jumping to scene 1; for others, require previous to be completed OR current
+      const canJump = idx === 0 || isUnlocked || idx <= state.currentScreen;
+      const classes = ['scene-item'];
+      if (isCurrent) classes.push('current');
+      if (isCompleted) classes.push('completed');
+      if (!canJump) classes.push('locked');
+      html += `
+        <button class="${classes.join(' ')}" data-scene-idx="${idx}" type="button" ${canJump ? '' : 'disabled'}>
+          <div class="scene-item-status"><span class="scene-item-status-icon"></span></div>
+          <div class="scene-item-content">
+            <div class="scene-item-eyebrow">المشهد ${arabicNumeral(idx + 1)} من ${arabicNumeral(total)}</div>
+            <div class="scene-item-title">${escapeHtml(scene.title)}</div>
+          </div>
+        </button>
+      `;
+    });
+    body.innerHTML = html;
+    body.querySelectorAll('.scene-item').forEach(btn => {
+      if (btn.disabled) return;
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.sceneIdx, 10);
+        closeSceneDrawer();
+        // Cancel any in-flight narration/TTS before switching
+        if (window.TTS) TTS.cancel();
+        Narrator.skipRequested = true;
+        state.currentScreen = idx;
+        // Reset per-scene state for the new scene so it plays fresh
+        resetCurrentSceneState();
+        saveState();
+        renderScene(idx);
+      });
+    });
+  }
+
+  function isSceneCompleted(idx) {
+    const scene = CONTENT.screens[idx];
+    if (!scene) return false;
+    // Scene 1 (opening) is complete once user has moved past it
+    if (scene.id === 'opening') return state.currentScreen > 0;
+    // For scenes 7 (dilemma) — check ss.completed
+    if (scene.id === 'dilemma') {
+      const ss = state.sceneState && state.sceneState[idx];
+      return ss && ss.completed;
+    }
+    // For scenes with assessments (2, 3, 4, 5, 6), completion = answered correctly
+    if (state.sceneScores && state.sceneScores[idx] === 1) return true;
+    // Also accept "answered" (even if wrong) as "explored" for navigation unlock
+    const ss = state.sceneState && state.sceneState[idx];
+    if (ss && ss.answered) return true;
+    // Scene 2 uses the old per-scene state (state.assessmentAnswered) — handle that
+    if (scene.id === 'boardroom' && state.assessmentAnswered && idx === state.currentScreen) return true;
+    return false;
+  }
+
+  function resetCurrentSceneState() {
+    // Clear the per-scene working state so re-entry plays fresh
+    state.assessmentAnswer = null;
+    state.assessmentAnswered = false;
+    state.narrationCompleted = false;
+    state.seatsRevealed = false;
+    // Don't clear exploredSeats for scene 2 here — handled by per-scene state
+    // Clear current scene's state in sceneState
+    if (state.sceneState) {
+      delete state.sceneState[state.currentScreen];
+    }
+  }
+
+  function restartCourse() {
+    if (!confirm('هل أنت متأكد من إعادة الرحلة من البداية؟ سيتم مسح تقدّمك.')) return;
+    state.currentScreen = 0;
+    state.exploredSeats = [];
+    state.assessmentAnswer = null;
+    state.assessmentAnswered = false;
+    state.narrationCompleted = false;
+    state.seatsRevealed = false;
+    state.sceneScores = {};
+    state.sceneState = {};
+    if (window.TTS) TTS.cancel();
+    Narrator.skipRequested = true;
+    saveState();
+    window.ScormApi.setStatus('incomplete');
+    window.ScormApi.setScore(0, 0, 100);
+    closeSceneDrawer();
+    renderScene(0);
+    showToast('بدأت الرحلة من جديد', 'success');
+  }
+
+  // ---------- TTS Controls ----------
+  function bindTTSControls() {
+    const ttsToggle = document.getElementById('tts-toggle');
+    const ttsRate = document.getElementById('tts-rate');
+    const ttsIcon = document.getElementById('tts-icon');
+    const ttsRateLabel = document.getElementById('tts-rate-label');
+
+    if (!window.TTS) return;
+
+    TTS.onStateChange(s => {
+      if (!ttsToggle) return;
+      ttsToggle.disabled = !s.available;
+      ttsToggle.classList.toggle('muted', s.muted || !s.available);
+      if (ttsIcon) {
+        if (!s.available) ttsIcon.textContent = '🔇';
+        else if (s.muted) ttsIcon.textContent = '🔈';
+        else ttsIcon.textContent = '🔊';
+      }
+    });
+
+    if (ttsToggle) {
+      ttsToggle.addEventListener('click', () => {
+        const s = TTS.getState();
+        if (!s.available) {
+          showToast('السرد الصوتي غير متاح في هذا المتصفح', 'error');
+          return;
+        }
+        TTS.setMuted(!s.muted);
+        if (s.muted) {
+          // Was muted, now unmuting — no auto-replay (user can use ↺)
+          showToast('تم تفعيل السرد الصوتي', 'success');
+        } else {
+          // Was unmuted, now muting
+          TTS.cancel();
+          showToast('تم كتم السرد الصوتي', 'success');
+        }
+      });
+    }
+
+    if (ttsRate) {
+      const rates = [0.75, 1.0, 1.25, 1.5];
+      const rateLabels = ['٠.٧٥×', '١×', '١.٢٥×', '١.٥×'];
+      ttsRate.addEventListener('click', () => {
+        const s = TTS.getState();
+        if (!s.available) {
+          showToast('السرد الصوتي غير متاح', 'error');
+          return;
+        }
+        const currentIdx = rates.indexOf(s.rate);
+        const nextIdx = (currentIdx + 1) % rates.length;
+        TTS.setRate(rates[nextIdx]);
+        if (ttsRateLabel) ttsRateLabel.textContent = rateLabels[nextIdx];
+        showToast(`سرعة السرد: ${rateLabels[nextIdx]}`, 'success');
+      });
+    }
   }
 
   // ---------- Narrator avatar (inline SVG) ----------
   function buildNarratorAvatar() {
-    // Stylized portrait of Dr. Sarah — flat illustration
+    // Dr. سارة الراشد — elegant Saudi woman with hijab, professional medical coat.
+    // Refined flat-illustration portrait with gold accents and subtle depth.
     const svg = `
 <svg viewBox="0 0 140 140" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#1B3B5F"/>
-      <stop offset="100%" stop-color="#122E4A"/>
-    </linearGradient>
-    <linearGradient id="hijab" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="narr-bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#1B3B5F"/>
       <stop offset="100%" stop-color="#0B1F33"/>
     </linearGradient>
-    <linearGradient id="coat" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="100%" stop-color="#F4ECD8"/>
+    <linearGradient id="narr-hijab" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#234B6E"/>
+      <stop offset="50%" stop-color="#1B3B5F"/>
+      <stop offset="100%" stop-color="#0B1F33"/>
     </linearGradient>
+    <linearGradient id="narr-hijab-fold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2D5A82" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#0B1F33" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="narr-coat" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FAF6E8"/>
+      <stop offset="100%" stop-color="#E8DEC5"/>
+    </linearGradient>
+    <linearGradient id="narr-skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#EDC9A0"/>
+      <stop offset="100%" stop-color="#D9B483"/>
+    </linearGradient>
+    <linearGradient id="narr-gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8C766"/>
+      <stop offset="100%" stop-color="#D4AF37"/>
+    </linearGradient>
+    <radialGradient id="narr-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#D4AF37" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#D4AF37" stop-opacity="0"/>
+    </radialGradient>
   </defs>
+
   <!-- Background -->
-  <rect width="140" height="140" fill="url(#bg)"/>
-  <!-- Soft glow behind head -->
-  <circle cx="70" cy="60" r="42" fill="#D4AF37" opacity="0.08"/>
-  <!-- Shoulders / coat -->
-  <path d="M 28 140 Q 28 100 50 92 L 90 92 Q 112 100 112 140 Z" fill="url(#coat)"/>
-  <!-- Coat collar -->
-  <path d="M 50 92 L 70 110 L 90 92 L 90 100 L 70 120 L 50 100 Z" fill="#D4AF37" opacity="0.4"/>
-  <!-- Hijab back -->
-  <path d="M 30 70 Q 30 35 70 30 Q 110 35 110 70 L 110 95 Q 90 88 70 88 Q 50 88 30 95 Z" fill="url(#hijab)"/>
+  <rect width="140" height="140" fill="url(#narr-bg)"/>
+
+  <!-- Soft golden halo behind head -->
+  <circle cx="70" cy="58" r="48" fill="url(#narr-glow)"/>
+
+  <!-- Hijab back (full drape over shoulders) -->
+  <path d="M 22 140 Q 22 78 50 64 Q 60 50 70 48 Q 80 50 90 64 Q 118 78 118 140 Z"
+        fill="url(#narr-hijab)"/>
+
+  <!-- Hijab side folds (depth) -->
+  <path d="M 30 100 Q 28 80 36 70 Q 32 88 38 110 Q 34 118 32 130 Z"
+        fill="url(#narr-hijab-fold)"/>
+  <path d="M 110 100 Q 112 80 104 70 Q 108 88 102 110 Q 106 118 108 130 Z"
+        fill="url(#narr-hijab-fold)"/>
+
+  <!-- Hijab front frame (covers hairline, frames face) -->
+  <path d="M 44 64 Q 44 38 70 34 Q 96 38 96 64 L 96 78 Q 92 90 70 92 Q 48 90 44 78 Z"
+        fill="url(#narr-hijab)"/>
+
+  <!-- Hijab front edge — gold trim (subtle elegance) -->
+  <path d="M 44 64 Q 44 38 70 34 Q 96 38 96 64"
+        stroke="url(#narr-gold)" stroke-width="1.2" fill="none" opacity="0.7"/>
+
+  <!-- Under-hijab cap (subtle, gives hijab structure) -->
+  <path d="M 50 50 Q 70 42 90 50 L 88 56 Q 70 50 52 56 Z"
+        fill="#0B1F33" opacity="0.4"/>
+
+  <!-- Neck -->
+  <path d="M 60 88 L 60 100 Q 70 104 80 100 L 80 88 Z" fill="url(#narr-skin)"/>
+  <!-- Neck shadow -->
+  <path d="M 60 88 L 60 100 Q 70 104 80 100 L 80 88" fill="#0B1F33" opacity="0.15"/>
+
   <!-- Face -->
-  <ellipse cx="70" cy="62" rx="22" ry="26" fill="#E8C5A0"/>
-  <!-- Face shadow (hijab edge) -->
-  <path d="M 48 60 Q 50 45 70 42 Q 90 45 92 60 L 92 72 Q 90 88 70 90 Q 50 88 48 72 Z" fill="#D9B48A" opacity="0.3"/>
-  <!-- Eyebrows -->
-  <path d="M 58 55 Q 62 53 66 55" stroke="#5C3A1E" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-  <path d="M 74 55 Q 78 53 82 55" stroke="#5C3A1E" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-  <!-- Eyes -->
-  <ellipse cx="62" cy="60" rx="1.8" ry="2.2" fill="#3A2410"/>
-  <ellipse cx="78" cy="60" rx="1.8" ry="2.2" fill="#3A2410"/>
-  <!-- Nose -->
-  <path d="M 70 64 L 68 72 L 72 72 Z" fill="#C99770" opacity="0.5"/>
-  <!-- Mouth (subtle smile) -->
-  <path d="M 64 78 Q 70 81 76 78" stroke="#A0524A" stroke-width="1.8" fill="none" stroke-linecap="round"/>
-  <!-- Hijab front edge -->
-  <path d="M 48 70 Q 50 45 70 42 Q 90 45 92 70" stroke="#0B1F33" stroke-width="1" fill="none"/>
-  <!-- Earring hint -->
-  <circle cx="49" cy="72" r="1.5" fill="#D4AF37"/>
-  <circle cx="91" cy="72" r="1.5" fill="#D4AF37"/>
+  <ellipse cx="70" cy="62" rx="22" ry="26" fill="url(#narr-skin)"/>
+
+  <!-- Face shading — hijab cast shadow on forehead -->
+  <path d="M 48 58 Q 50 44 70 40 Q 90 44 92 58 L 92 64 Q 90 50 70 47 Q 50 50 48 64 Z"
+        fill="#0B1F33" opacity="0.18"/>
+
+  <!-- Cheek warmth (subtle blush) -->
+  <ellipse cx="56" cy="72" rx="5" ry="3.5" fill="#D4A488" opacity="0.35"/>
+  <ellipse cx="84" cy="72" rx="5" ry="3.5" fill="#D4A488" opacity="0.35"/>
+
+  <!-- Eyebrows — refined arches -->
+  <path d="M 56 55 Q 60 52.5 65 55" stroke="#3A2410" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <path d="M 75 55 Q 80 52.5 84 55" stroke="#3A2410" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+
+  <!-- Eyes — almond shape, larger pupils for warmth -->
+  <path d="M 56 60 Q 62 57 68 60 Q 62 63 56 60 Z" fill="#FFFFFF"/>
+  <path d="M 72 60 Q 78 57 84 60 Q 78 63 72 60 Z" fill="#FFFFFF"/>
+  <ellipse cx="62" cy="60.5" rx="2" ry="2.4" fill="#3A2410"/>
+  <ellipse cx="78" cy="60.5" rx="2" ry="2.4" fill="#3A2410"/>
+  <!-- Eye highlights -->
+  <circle cx="62.8" cy="59.8" r="0.7" fill="#FFFFFF"/>
+  <circle cx="78.8" cy="59.8" r="0.7" fill="#FFFFFF"/>
+  <!-- Eyelash hint -->
+  <path d="M 56 60 Q 54 58 53 57" stroke="#3A2410" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+  <path d="M 84 60 Q 86 58 87 57" stroke="#3A2410" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+
+  <!-- Nose — soft, refined -->
+  <path d="M 70 64 Q 68 70 67 74 Q 68 75 70 75 Q 72 75 73 74 Q 72 70 70 64"
+        stroke="#B8916A" stroke-width="0.8" fill="none" opacity="0.6"/>
+  <ellipse cx="68" cy="74" rx="0.8" ry="0.6" fill="#B8916A" opacity="0.4"/>
+  <ellipse cx="72" cy="74" rx="0.8" ry="0.6" fill="#B8916A" opacity="0.4"/>
+
+  <!-- Lips — warm, natural smile -->
+  <path d="M 64 79 Q 67 77 70 77.5 Q 73 77 76 79 Q 73 81 70 81 Q 67 81 64 79 Z"
+        fill="#B86866" opacity="0.85"/>
+  <path d="M 64 79 Q 70 80.5 76 79" stroke="#9A4F4D" stroke-width="0.6" fill="none"/>
+
+  <!-- Chin shadow -->
+  <ellipse cx="70" cy="84" rx="6" ry="2" fill="#0B1F33" opacity="0.08"/>
+
+  <!-- Gold earrings (subtle, visible at hijab edge) -->
+  <circle cx="48" cy="76" r="1.6" fill="url(#narr-gold)"/>
+  <circle cx="92" cy="76" r="1.6" fill="url(#narr-gold)"/>
+  <circle cx="48" cy="76" r="0.6" fill="#FFFFFF" opacity="0.7"/>
+  <circle cx="92" cy="76" r="0.6" fill="#FFFFFF" opacity="0.7"/>
+
+  <!-- Medical coat shoulders -->
+  <path d="M 28 140 Q 28 104 48 96 L 56 92 Q 60 96 70 96 Q 80 96 84 92 L 92 96 Q 112 104 112 140 Z"
+        fill="url(#narr-coat)"/>
+
+  <!-- Coat lapels -->
+  <path d="M 56 92 L 60 100 L 58 130 L 54 110 Z" fill="#E8DEC5"/>
+  <path d="M 84 92 L 80 100 L 82 130 L 86 110 Z" fill="#E8DEC5"/>
+  <!-- Lapel shadow -->
+  <path d="M 60 100 L 58 130" stroke="#C8BD9F" stroke-width="0.6" fill="none"/>
+  <path d="M 80 100 L 82 130" stroke="#C8BD9F" stroke-width="0.6" fill="none"/>
+
+  <!-- Coat center line (subtle) -->
+  <line x1="70" y1="100" x2="70" y2="140" stroke="#C8BD9F" stroke-width="0.5" opacity="0.5"/>
+
+  <!-- Gold collar pin (medical/professional accent) -->
+  <circle cx="62" cy="106" r="2.2" fill="url(#narr-gold)"/>
+  <circle cx="62" cy="106" r="1" fill="#0B1F33" opacity="0.3"/>
+  <!-- Tiny medical cross hint inside pin -->
+  <path d="M 61.4 106 L 62.6 106 M 62 105.4 L 62 106.6" stroke="#FAF6E8" stroke-width="0.4"/>
+
+  <!-- Name badge hint (small rectangle on coat) -->
+  <rect x="84" y="112" width="14" height="9" rx="1.5" fill="#FFFFFF" opacity="0.85" stroke="#D4AF37" stroke-width="0.4"/>
+  <rect x="86" y="114" width="10" height="1" rx="0.3" fill="#1B3B5F"/>
+  <rect x="86" y="116.5" width="7" height="0.7" rx="0.2" fill="#595959"/>
+  <rect x="86" y="118" width="8" height="0.7" rx="0.2" fill="#595959"/>
 </svg>`;
     $narratorAvatar().innerHTML = svg;
   }
@@ -152,6 +436,11 @@
     const scene = CONTENT.screens[idx];
     if (!scene) return;
     state.currentScreen = idx;
+
+    // Cancel any in-flight narration + TTS from previous scene
+    if (window.TTS) TTS.cancel();
+    Narrator.skipRequested = true;
+    Animator.clear();
 
     // Update topbar
     $topbar().classList.add('visible');
@@ -518,7 +807,7 @@
           setTimeout(() => {
             const panel = document.getElementById('assessment-panel');
             panel.classList.add('visible');
-            enableAssessment(scene);
+            enableBoardroomAssessment(scene);
             panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
             showToast('أحسنت! اختبر فهمك الآن', 'success');
           }, 400);
@@ -550,18 +839,18 @@
     }
   }
 
-  function enableAssessment(scene) {
+  function enableBoardroomAssessment(scene) {
     const opts = document.querySelectorAll('#assessment-options .assessment-option');
     opts.forEach(opt => {
       opt.addEventListener('click', () => {
         if (state.assessmentAnswered) return;
         const idx = parseInt(opt.dataset.idx, 10);
-        handleAssessmentAnswer(idx, scene);
+        handleBoardroomAssessmentAnswer(idx, scene);
       });
     });
   }
 
-  function handleAssessmentAnswer(idx, scene) {
+  function handleBoardroomAssessmentAnswer(idx, scene) {
     state.assessmentAnswer = idx;
     state.assessmentAnswered = true;
     const correct = idx === scene.assessment.correct_index;
@@ -654,6 +943,1195 @@
       ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
     `;
     document.getElementById('assessment-panel').classList.add('visible');
+  }
+
+  // ============================================================
+  // SCENE 3 — Building the Framework (Layered Ziggurat)
+  // ============================================================
+  function renderFramework(scene) {
+    document.body.classList.add('cinematic');
+    const stage = $stage();
+    stage.style.opacity = '1';
+
+    // Per-scene state
+    if (!state.sceneState[state.currentScreen]) {
+      state.sceneState[state.currentScreen] = { explored: [], answered: false, answer: null, narrationCompleted: false };
+    }
+    const ss = state.sceneState[state.currentScreen];
+
+    // Render layers (DOM order: bottom = layer 1; we use column-reverse in CSS)
+    const layersHtml = scene.layers.map(layer => `
+      <div class="framework-layer" data-layer="${layer.n}" data-layer-idx="${layer.n - 1}" tabindex="0" role="button"
+           aria-label="الطبقة ${arabicNumeral(layer.n)}: ${layer.label}. اضغط للاستكشاف">
+        <div class="framework-layer-num">${layer.icon}</div>
+        <div class="framework-layer-label">${escapeHtml(layer.label)}</div>
+        <div class="framework-layer-check">✓</div>
+      </div>
+    `).join('');
+
+    stage.innerHTML = `
+      <div class="scene-framework">
+        <div class="framework-header" id="fw-header">
+          <div class="framework-eyebrow">${scene.eyebrow}</div>
+          <h2 class="framework-title">${scene.hero_title}</h2>
+          <p class="framework-instruction">${scene.instruction}</p>
+        </div>
+        <div class="framework-tower" id="fw-tower">${layersHtml}</div>
+        <div class="framework-progress" id="fw-progress">
+          <span>استكشفت</span>
+          <div class="progress-dots" id="fw-progress-dots">
+            ${scene.layers.map(() => '<span class="progress-dot"></span>').join('')}
+          </div>
+          <span id="fw-progress-text">٠ من ${arabicNumeral(scene.layers.length)}</span>
+        </div>
+        <div class="assessment-panel" id="assessment-panel">
+          <div class="assessment-eyebrow">اختبار سريع</div>
+          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-options" id="assessment-options">
+            ${scene.assessment.options.map((opt, i) => `
+              <button class="assessment-option" data-idx="${i}" type="button">
+                <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
+                <span class="option-text">${opt}</span>
+              </button>
+            `).join('')}
+          </div>
+          <div class="assessment-feedback" id="assessment-feedback"></div>
+        </div>
+      </div>
+    `;
+
+    const reduced = Animator.reducedMotion;
+    const tl = [];
+
+    if (reduced) {
+      tl.push({ time: 0, fn: () => {
+        document.getElementById('fw-header').classList.add('anim-fade-in');
+        document.querySelectorAll('.framework-layer').forEach(l => l.classList.add('revealed'));
+      }});
+    } else {
+      tl.push({ time: 0.2, fn: () => document.getElementById('fw-header').classList.add('anim-fade-up') });
+      // Reveal layers from bottom (1) to top (6) — staggered
+      scene.layers.forEach((layer, i) => {
+        tl.push({ time: 1.5 + i * 0.4, fn: () => {
+          const el = document.querySelector(`.framework-layer[data-layer="${layer.n}"]`);
+          if (el) el.classList.add('revealed');
+        }});
+      });
+    }
+
+    // Narration
+    const narrationStart = reduced ? 0.5 : 2.5;
+    tl.push({ time: narrationStart, fn: () => {
+      Narrator.start(scene.narration, {
+        totalSeconds: scene.narration_total_seconds,
+        onSegment: (seg, idx) => {
+          if (seg.layer) {
+            const el = document.querySelector(`.framework-layer[data-layer="${seg.layer}"]`);
+            if (el) Animator.pulseGlow(el, 3.5);
+          }
+        },
+        onComplete: () => {
+          ss.narrationCompleted = true;
+          saveState();
+          document.getElementById('fw-progress').classList.add('visible');
+          enableFrameworkLayers(scene);
+          showToast('كل طبقة جاهزة للاستكشاف — انقر للبدء', 'success');
+        },
+      });
+    }});
+
+    // If narration already completed, skip to interactive mode
+    if (ss.narrationCompleted) {
+      Animator.clear();
+      Narrator.hideNarrator();
+      document.getElementById('subtitle-bar').classList.remove('visible');
+      document.getElementById('fw-progress').classList.add('visible');
+      document.querySelectorAll('.framework-layer').forEach(l => l.classList.add('revealed'));
+      enableFrameworkLayers(scene);
+      // Restore explored state
+      ss.explored.forEach(n => {
+        const el = document.querySelector(`.framework-layer[data-layer="${n}"]`);
+        if (el) el.classList.add('completed');
+      });
+      updateFrameworkProgress(scene);
+      if (ss.answered) showFrameworkAssessment(scene);
+    } else {
+      Animator.runTimeline(tl);
+    }
+  }
+
+  function enableFrameworkLayers(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    scene.layers.forEach(layer => {
+      const el = document.querySelector(`.framework-layer[data-layer="${layer.n}"]`);
+      if (!el) return;
+      if (ss.explored.includes(layer.n)) el.classList.add('completed');
+      el.addEventListener('click', () => openLayerModal(layer, scene));
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openLayerModal(layer, scene); }
+      });
+    });
+    updateFrameworkProgress(scene);
+  }
+
+  function openLayerModal(layer, scene) {
+    const modal = document.createElement('div');
+    modal.className = 'seat-modal';
+    modal.innerHTML = `
+      <div class="seat-modal-card">
+        <div class="seat-modal-num">${layer.icon}</div>
+        <div class="seat-modal-eyebrow">الطبقة ${arabicNumeral(layer.n)} من ${arabicNumeral(scene.layers.length)}</div>
+        <h3 class="seat-modal-title">${escapeHtml(layer.label)}</h3>
+        <div class="seat-modal-story">${escapeHtml(layer.story)}</div>
+        <div class="seat-modal-def-label">التعريف الرسمي</div>
+        <div class="seat-modal-def">${escapeHtml(layer.definition)}</div>
+        <button class="seat-modal-close" type="button">فهمت</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    requestAnimationFrame(() => modal.classList.add('visible'));
+
+    const close = () => {
+      modal.classList.remove('visible');
+      setTimeout(() => modal.remove(), 300);
+      const ss = state.sceneState[state.currentScreen];
+      if (!ss.explored.includes(layer.n)) {
+        ss.explored.push(layer.n);
+        const el = document.querySelector(`.framework-layer[data-layer="${layer.n}"]`);
+        if (el) el.classList.add('completed');
+        saveState();
+        updateFrameworkProgress(scene);
+        if (ss.explored.length === scene.layers.length && !ss.answered) {
+          setTimeout(() => {
+            document.getElementById('assessment-panel').classList.add('visible');
+            enableAssessment(scene, 'framework');
+            document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            showToast('أحسنت! اختبر فهمك الآن', 'success');
+          }, 400);
+        }
+      }
+    };
+
+    modal.querySelector('.seat-modal-close').addEventListener('click', close);
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function escHandler(e) {
+      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
+    });
+  }
+
+  function updateFrameworkProgress(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    const total = scene.layers.length;
+    const done = ss.explored.length;
+    const txt = document.getElementById('fw-progress-text');
+    if (txt) txt.textContent = `${arabicNumeral(done)} من ${arabicNumeral(total)}`;
+    const dots = document.querySelectorAll('#fw-progress-dots .progress-dot');
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('filled', i < done);
+      dot.classList.toggle('all-done', done === total);
+    });
+    const prog = document.getElementById('fw-progress');
+    if (prog && done === total) {
+      prog.style.borderColor = 'var(--green)';
+      prog.style.color = 'var(--green)';
+    }
+  }
+
+  function showFrameworkAssessment(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    const opts = document.querySelectorAll('#assessment-options .assessment-option');
+    opts.forEach((o, i) => {
+      o.classList.add('locked');
+      if (i === scene.assessment.correct_index) o.classList.add('correct');
+      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
+    });
+    const fb = document.getElementById('assessment-feedback');
+    const correct = ss.answer === scene.assessment.correct_index;
+    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
+    fb.innerHTML = `
+      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
+        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
+      </span>
+      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+    `;
+    document.getElementById('assessment-panel').classList.add('visible');
+  }
+
+  // ============================================================
+  // SCENE 4 — Twin Pillars (Governance + Compliance)
+  // ============================================================
+  function renderPillars(scene) {
+    document.body.classList.add('cinematic');
+    const stage = $stage();
+    stage.style.opacity = '1';
+
+    if (!state.sceneState[state.currentScreen]) {
+      state.sceneState[state.currentScreen] = { explored: [], answered: false, answer: null, narrationCompleted: false };
+    }
+    const ss = state.sceneState[state.currentScreen];
+
+    stage.innerHTML = `
+      <div class="scene-pillars">
+        <div class="pillars-header" id="pl-header">
+          <div class="pillars-eyebrow">${scene.eyebrow}</div>
+          <h2 class="pillars-title">${scene.hero_title}</h2>
+          <p class="pillars-instruction">${scene.instruction}</p>
+        </div>
+        <div class="pillars-stage" id="pl-stage">
+          <div class="pillars-arch" id="pl-arch">الاستدامة</div>
+          <div class="pillar gov" id="pillar-gov" data-pillar="gov" tabindex="0" role="button" aria-label="ركيزة الحوكمة">
+            <div class="pillar-icon">ح</div>
+            <div class="pillar-label">${scene.pillars.gov.label}</div>
+            <div class="pillar-subtitle">${scene.pillars.gov.subtitle}</div>
+            <div class="pillar-question">${scene.pillars.gov.question}</div>
+            <div class="pillar-facets">
+              ${scene.pillars.gov.facets.map(f => `<div class="pillar-facet">${escapeHtml(f)}</div>`).join('')}
+            </div>
+          </div>
+          <div class="pillar comp" id="pillar-comp" data-pillar="comp" tabindex="0" role="button" aria-label="ركيزة الامتثال">
+            <div class="pillar-icon">ا</div>
+            <div class="pillar-label">${scene.pillars.comp.label}</div>
+            <div class="pillar-subtitle">${scene.pillars.comp.subtitle}</div>
+            <div class="pillar-question">${scene.pillars.comp.question}</div>
+            <div class="pillar-facets">
+              ${scene.pillars.comp.facets.map(f => `<div class="pillar-facet">${escapeHtml(f)}</div>`).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="pillars-progress" id="pl-progress">
+          <span>استكشفت</span>
+          <div class="progress-dots" id="pl-progress-dots">
+            <span class="progress-dot"></span>
+            <span class="progress-dot"></span>
+          </div>
+          <span id="pl-progress-text">٠ من ٢</span>
+        </div>
+        <div class="assessment-panel" id="assessment-panel">
+          <div class="assessment-eyebrow">اختبار سريع</div>
+          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-options" id="assessment-options">
+            ${scene.assessment.options.map((opt, i) => `
+              <button class="assessment-option" data-idx="${i}" type="button">
+                <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
+                <span class="option-text">${opt}</span>
+              </button>
+            `).join('')}
+          </div>
+          <div class="assessment-feedback" id="assessment-feedback"></div>
+        </div>
+      </div>
+    `;
+
+    const reduced = Animator.reducedMotion;
+    const tl = [];
+
+    if (reduced) {
+      tl.push({ time: 0, fn: () => {
+        document.getElementById('pl-header').classList.add('anim-fade-in');
+        document.getElementById('pillar-gov').classList.add('revealed');
+        document.getElementById('pillar-comp').classList.add('revealed');
+        document.getElementById('pl-arch').classList.add('descended');
+      }});
+    } else {
+      tl.push({ time: 0.2, fn: () => document.getElementById('pl-header').classList.add('anim-fade-up') });
+      tl.push({ time: 3.5, fn: () => document.getElementById('pillar-gov').classList.add('revealed') });
+      tl.push({ time: 8.0, fn: () => document.getElementById('pillar-comp').classList.add('revealed') });
+      tl.push({ time: 19.5, fn: () => document.getElementById('pl-arch').classList.add('descended') });
+    }
+
+    const narrationStart = reduced ? 0.5 : 2.5;
+    tl.push({ time: narrationStart, fn: () => {
+      Narrator.start(scene.narration, {
+        totalSeconds: scene.narration_total_seconds,
+        onSegment: (seg, idx) => {
+          if (seg.pillar === 'gov') {
+            const el = document.getElementById('pillar-gov');
+            if (el) Animator.pulseGlow(el, 3.5);
+          } else if (seg.pillar === 'comp') {
+            const el = document.getElementById('pillar-comp');
+            if (el) Animator.pulseGlow(el, 3.5);
+          }
+        },
+        onComplete: () => {
+          ss.narrationCompleted = true;
+          saveState();
+          document.getElementById('pl-progress').classList.add('visible');
+          enablePillars(scene);
+          showToast('كل ركيزة جاهزة للاستكشاف — انقر للبدء', 'success');
+        },
+      });
+    }});
+
+    if (ss.narrationCompleted) {
+      Animator.clear();
+      Narrator.hideNarrator();
+      document.getElementById('subtitle-bar').classList.remove('visible');
+      document.getElementById('pl-progress').classList.add('visible');
+      document.getElementById('pillar-gov').classList.add('revealed');
+      document.getElementById('pillar-comp').classList.add('revealed');
+      document.getElementById('pl-arch').classList.add('descended');
+      enablePillars(scene);
+      ss.explored.forEach(p => {
+        const el = document.getElementById('pillar-' + p);
+        if (el) el.classList.add('expanded');
+      });
+      updatePillarsProgress(scene);
+      if (ss.answered) showPillarsAssessment(scene);
+    } else {
+      Animator.runTimeline(tl);
+    }
+  }
+
+  function enablePillars(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    ['gov', 'comp'].forEach(p => {
+      const el = document.getElementById('pillar-' + p);
+      if (!el) return;
+      if (ss.explored.includes(p)) el.classList.add('expanded');
+      el.addEventListener('click', () => togglePillar(p, scene));
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePillar(p, scene); }
+      });
+    });
+    updatePillarsProgress(scene);
+  }
+
+  function togglePillar(p, scene) {
+    const el = document.getElementById('pillar-' + p);
+    if (!el) return;
+    const ss = state.sceneState[state.currentScreen];
+    // Toggle expansion
+    const wasExpanded = el.classList.contains('expanded');
+    el.classList.add('expanded');
+    // Dim the other pillar
+    const other = document.getElementById('pillar-' + (p === 'gov' ? 'comp' : 'gov'));
+    if (other) other.classList.add('dimmed');
+    // Mark as explored
+    if (!ss.explored.includes(p)) {
+      ss.explored.push(p);
+      saveState();
+      updatePillarsProgress(scene);
+      if (ss.explored.length === 2 && !ss.answered) {
+        setTimeout(() => {
+          document.getElementById('assessment-panel').classList.add('visible');
+          enableAssessment(scene, 'pillars');
+          document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+          showToast('أحسنت! اختبر فهمك الآن', 'success');
+        }, 400);
+      }
+    }
+    // Scroll to top of pillar so facets are visible
+    setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+  }
+
+  function updatePillarsProgress(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    const total = 2;
+    const done = ss.explored.length;
+    const txt = document.getElementById('pl-progress-text');
+    if (txt) txt.textContent = `${arabicNumeral(done)} من ${arabicNumeral(total)}`;
+    const dots = document.querySelectorAll('#pl-progress-dots .progress-dot');
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('filled', i < done);
+      dot.classList.toggle('all-done', done === total);
+    });
+    const prog = document.getElementById('pl-progress');
+    if (prog && done === total) {
+      prog.style.borderColor = 'var(--green)';
+      prog.style.color = 'var(--green)';
+    }
+  }
+
+  function showPillarsAssessment(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    const opts = document.querySelectorAll('#assessment-options .assessment-option');
+    opts.forEach((o, i) => {
+      o.classList.add('locked');
+      if (i === scene.assessment.correct_index) o.classList.add('correct');
+      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
+    });
+    const fb = document.getElementById('assessment-feedback');
+    const correct = ss.answer === scene.assessment.correct_index;
+    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
+    fb.innerHTML = `
+      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
+        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
+      </span>
+      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+    `;
+    document.getElementById('assessment-panel').classList.add('visible');
+  }
+
+  // ============================================================
+  // SCENE 5 — Decision Court (Classification Cards)
+  // ============================================================
+  function renderCourt(scene) {
+    document.body.classList.add('cinematic');
+    const stage = $stage();
+    stage.style.opacity = '1';
+
+    if (!state.sceneState[state.currentScreen]) {
+      state.sceneState[state.currentScreen] = {
+        classifications: {}, // {caseN: 'gov' | 'comp'}
+        answered: false,
+        answer: null,
+        narrationCompleted: false,
+        currentCase: 1,
+      };
+    }
+    const ss = state.sceneState[state.currentScreen];
+
+    stage.innerHTML = `
+      <div class="scene-court">
+        <div class="court-header" id="ct-header">
+          <div class="court-eyebrow">${scene.eyebrow}</div>
+          <h2 class="court-title">${scene.hero_title}</h2>
+          <p class="court-scenario">${escapeHtml(scene.scenario)}</p>
+        </div>
+        <div class="court-progress" id="ct-progress">
+          ${scene.cases.map((c, i) => `<div class="court-progress-dot" data-case="${c.n}">${arabicNumeral(c.n)}</div>`).join('')}
+        </div>
+        <div id="ct-case-container"></div>
+        <div class="assessment-panel" id="assessment-panel">
+          <div class="assessment-eyebrow">القاعدة الذهبية</div>
+          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-options" id="assessment-options">
+            ${scene.assessment.options.map((opt, i) => `
+              <button class="assessment-option" data-idx="${i}" type="button">
+                <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
+                <span class="option-text">${opt}</span>
+              </button>
+            `).join('')}
+          </div>
+          <div class="assessment-feedback" id="assessment-feedback"></div>
+        </div>
+      </div>
+    `;
+
+    const reduced = Animator.reducedMotion;
+    const tl = [];
+    if (reduced) {
+      tl.push({ time: 0, fn: () => document.getElementById('ct-header').classList.add('anim-fade-in') });
+    } else {
+      tl.push({ time: 0.2, fn: () => document.getElementById('ct-header').classList.add('anim-fade-up') });
+    }
+
+    const narrationStart = reduced ? 0.5 : 2.5;
+    tl.push({ time: narrationStart, fn: () => {
+      Narrator.start(scene.narration, {
+        totalSeconds: scene.narration_total_seconds,
+        onComplete: () => {
+          ss.narrationCompleted = true;
+          saveState();
+          // Show first case (or current if returning)
+          showCourtCase(scene, ss.currentCase || 1);
+          // Update progress dots
+          updateCourtProgress(scene);
+        },
+      });
+    }});
+
+    if (ss.narrationCompleted) {
+      Animator.clear();
+      Narrator.hideNarrator();
+      document.getElementById('subtitle-bar').classList.remove('visible');
+      updateCourtProgress(scene);
+      // If all classified, show assessment
+      if (Object.keys(ss.classifications).length === scene.cases.length) {
+        if (ss.answered) {
+          showCourtAssessment(scene);
+        } else {
+          document.getElementById('assessment-panel').classList.add('visible');
+          enableAssessment(scene, 'court');
+        }
+      } else {
+        // Resume at first unclassified case
+        const nextCase = scene.cases.find(c => !ss.classifications[c.n]) || scene.cases[0];
+        showCourtCase(scene, nextCase.n);
+      }
+    } else {
+      Animator.runTimeline(tl);
+    }
+  }
+
+  function showCourtCase(scene, caseN) {
+    const caseData = scene.cases.find(c => c.n === caseN);
+    if (!caseData) return;
+    const ss = state.sceneState[state.currentScreen];
+    const container = document.getElementById('ct-case-container');
+    const alreadyClassified = ss.classifications[caseN] !== undefined;
+    const isCorrect = alreadyClassified && ss.classifications[caseN] === caseData.classification;
+
+    container.innerHTML = `
+      <div class="court-card" id="court-card-${caseN}">
+        <div class="court-card-num">القضية ${arabicNumeral(caseN)}</div>
+        <div class="court-card-label">القرار المقترح</div>
+        <div class="court-card-action">${escapeHtml(caseData.action)}</div>
+        <div class="court-buttons">
+          <button class="court-btn gov ${alreadyClassified && ss.classifications[caseN] === 'gov' ? 'selected' : ''} ${alreadyClassified ? 'locked' : ''}" data-choice="gov" type="button" ${alreadyClassified ? 'disabled' : ''}>
+            <span class="court-btn-icon">ح</span>
+            حوكمة
+          </button>
+          <button class="court-btn comp ${alreadyClassified && ss.classifications[caseN] === 'comp' ? 'selected' : ''} ${alreadyClassified ? 'locked' : ''}" data-choice="comp" type="button" ${alreadyClassified ? 'disabled' : ''}>
+            <span class="court-btn-icon">ا</span>
+            امتثال
+          </button>
+        </div>
+        <div class="court-verdict ${alreadyClassified ? 'show ' + (isCorrect ? 'correct' : 'incorrect') : ''}" id="court-verdict-${caseN}">
+          ${alreadyClassified ? (isCorrect
+            ? `<span class="court-verdict-label">✓ تصنيف صحيح</span>${escapeHtml(caseData.rationale)}`
+            : `<span class="court-verdict-label">✗ تصنيف غير صحيح</span>التصنيف الصحيح: ${caseData.classification === 'gov' ? 'حوكمة' : 'امتثال'}. ${escapeHtml(caseData.rationale)}`) : ''}
+        </div>
+      </div>
+    `;
+
+    if (!alreadyClassified) {
+      container.querySelectorAll('.court-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const choice = btn.dataset.choice;
+          ss.classifications[caseN] = choice;
+          saveState();
+          // Re-render this case to show verdict
+          showCourtCase(scene, caseN);
+          updateCourtProgress(scene);
+          const isNowCorrect = choice === caseData.classification;
+          showToast(isNowCorrect ? 'تصنيف صحيح!' : 'تصنيف غير صحيح', isNowCorrect ? 'success' : 'error');
+          // Advance to next case after delay
+          setTimeout(() => {
+            const nextCase = scene.cases.find(c => !ss.classifications[c.n]);
+            if (nextCase) {
+              ss.currentCase = nextCase.n;
+              saveState();
+              showCourtCase(scene, nextCase.n);
+              document.getElementById('court-card-' + nextCase.n).scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+              // All classified — show assessment
+              ss.currentCase = null;
+              saveState();
+              document.getElementById('assessment-panel').classList.add('visible');
+              enableAssessment(scene, 'court');
+              document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+              showToast('أحسنت! اختبر فهمك بالقاعدة الذهبية', 'success');
+            }
+          }, 2800);
+        });
+      });
+    }
+  }
+
+  function updateCourtProgress(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    scene.cases.forEach(c => {
+      const dot = document.querySelector(`.court-progress-dot[data-case="${c.n}"]`);
+      if (!dot) return;
+      dot.classList.remove('current', 'correct', 'incorrect');
+      if (ss.classifications[c.n] !== undefined) {
+        const isCorrect = ss.classifications[c.n] === c.classification;
+        dot.classList.add(isCorrect ? 'correct' : 'incorrect');
+      } else if (ss.currentCase === c.n) {
+        dot.classList.add('current');
+      }
+    });
+  }
+
+  function showCourtAssessment(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    const opts = document.querySelectorAll('#assessment-options .assessment-option');
+    opts.forEach((o, i) => {
+      o.classList.add('locked');
+      if (i === scene.assessment.correct_index) o.classList.add('correct');
+      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
+    });
+    const fb = document.getElementById('assessment-feedback');
+    const correct = ss.answer === scene.assessment.correct_index;
+    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
+    fb.innerHTML = `
+      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
+        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
+      </span>
+      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+    `;
+    document.getElementById('assessment-panel').classList.add('visible');
+  }
+
+  // ============================================================
+  // SCENE 6 — Integrity Map (Star Constellation)
+  // ============================================================
+  function renderIntegrity(scene) {
+    document.body.classList.add('cinematic');
+    const stage = $stage();
+    stage.style.opacity = '1';
+
+    if (!state.sceneState[state.currentScreen]) {
+      state.sceneState[state.currentScreen] = { explored: [], answered: false, answer: null, narrationCompleted: false };
+    }
+    const ss = state.sceneState[state.currentScreen];
+
+    // Build star SVG — 1 center star + 5 outer stars in a circle
+    const cx = 280, cy = 280; // SVG center
+    const centerStar = scene.stars.find(s => s.isCenter);
+    const outerStars = scene.stars.filter(s => !s.isCenter);
+    const radius = 180; // distance from center for outer stars
+
+    const outerStarsHtml = outerStars.map((star, i) => {
+      // Convert angle to x,y; start at top (-90deg) and go clockwise
+      const angleRad = ((star.angle - 90) * Math.PI) / 180;
+      const x = cx + radius * Math.cos(angleRad);
+      const y = cy + radius * Math.sin(angleRad);
+      return `
+        <g class="integrity-star" id="star-${star.n}" data-star-n="${star.n}" transform="translate(${x}, ${y})" tabindex="0" role="button"
+           aria-label="النجم ${arabicNumeral(star.n)}: ${star.label}. اضغط للاستكشاف">
+          <circle class="star-circle" r="26"/>
+          <text class="star-icon" y="2">${star.icon}</text>
+          <text class="star-label" y="48">${escapeHtml(star.label)}</text>
+          <text class="star-check" y="-30">✓</text>
+        </g>
+      `;
+    }).join('');
+
+    // Center star (larger)
+    const centerStarHtml = centerStar ? `
+      <g class="integrity-star star-center" id="star-${centerStar.n}" data-star-n="${centerStar.n}" transform="translate(${cx}, ${cy})" tabindex="0" role="button"
+         aria-label="النجم المركزي: ${centerStar.label}. اضغط للاستكشاف">
+        <circle class="star-circle" r="36"/>
+        <text class="star-icon" y="2">${centerStar.icon}</text>
+        <text class="star-label" y="56">${escapeHtml(centerStar.label)}</text>
+        <text class="star-check" y="-40">✓</text>
+      </g>
+    ` : '';
+
+    // Background twinkle dots
+    const bgDots = Array.from({ length: 20 }, (_, i) => {
+      const x = 40 + Math.random() * 480;
+      const y = 40 + Math.random() * 480;
+      const r = 0.8 + Math.random() * 1.5;
+      const delay = Math.random() * 4;
+      return `<circle class="star-bg-dot" cx="${x}" cy="${y}" r="${r}" style="animation-delay:${delay}s"/>`;
+    }).join('');
+
+    stage.innerHTML = `
+      <div class="scene-integrity">
+        <div class="integrity-header" id="in-header">
+          <div class="integrity-eyebrow">${scene.eyebrow}</div>
+          <h2 class="integrity-title">${scene.hero_title}</h2>
+          <p class="integrity-instruction">${scene.instruction}</p>
+        </div>
+        <div class="integrity-stage" id="in-stage">
+          <svg class="integrity-svg" viewBox="0 0 560 560" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <radialGradient id="in-glow" cx="0.5" cy="0.5" r="0.5">
+                <stop offset="0%" stop-color="#D4AF37" stop-opacity="0.12"/>
+                <stop offset="100%" stop-color="#D4AF37" stop-opacity="0"/>
+              </radialGradient>
+            </defs>
+            <!-- Soft background glow -->
+            <circle cx="${cx}" cy="${cy}" r="200" fill="url(#in-glow)"/>
+            <!-- Background twinkle dots -->
+            ${bgDots}
+            <!-- Outer stars -->
+            ${outerStarsHtml}
+            <!-- Center star -->
+            ${centerStarHtml}
+          </svg>
+        </div>
+        <div class="integrity-progress" id="in-progress">
+          <span>استكشفت</span>
+          <div class="progress-dots" id="in-progress-dots">
+            ${scene.stars.map(() => '<span class="progress-dot"></span>').join('')}
+          </div>
+          <span id="in-progress-text">٠ من ${arabicNumeral(scene.stars.length)}</span>
+        </div>
+        <div class="assessment-panel" id="assessment-panel">
+          <div class="assessment-eyebrow">اختبار سريع</div>
+          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-options" id="assessment-options">
+            ${scene.assessment.options.map((opt, i) => `
+              <button class="assessment-option" data-idx="${i}" type="button">
+                <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
+                <span class="option-text">${opt}</span>
+              </button>
+            `).join('')}
+          </div>
+          <div class="assessment-feedback" id="assessment-feedback"></div>
+        </div>
+      </div>
+    `;
+
+    const reduced = Animator.reducedMotion;
+    const tl = [];
+    if (reduced) {
+      tl.push({ time: 0, fn: () => document.getElementById('in-header').classList.add('anim-fade-in') });
+    } else {
+      tl.push({ time: 0.2, fn: () => document.getElementById('in-header').classList.add('anim-fade-up') });
+    }
+
+    const narrationStart = reduced ? 0.5 : 2.5;
+    tl.push({ time: narrationStart, fn: () => {
+      Narrator.start(scene.narration, {
+        totalSeconds: scene.narration_total_seconds,
+        onSegment: (seg, idx) => {
+          if (seg.star === 'center') {
+            const el = document.getElementById(`star-${centerStar.n}`);
+            if (el) Animator.pulseGlow(el, 3.5);
+          } else if (seg.star) {
+            const el = document.getElementById(`star-${seg.star}`);
+            if (el) Animator.pulseGlow(el, 3.5);
+          }
+        },
+        onComplete: () => {
+          ss.narrationCompleted = true;
+          saveState();
+          document.getElementById('in-progress').classList.add('visible');
+          enableIntegrityStars(scene);
+          showToast('كل نجم جاهز للاستكشاف — انقر للبدء', 'success');
+        },
+      });
+    }});
+
+    if (ss.narrationCompleted) {
+      Animator.clear();
+      Narrator.hideNarrator();
+      document.getElementById('subtitle-bar').classList.remove('visible');
+      document.getElementById('in-progress').classList.add('visible');
+      enableIntegrityStars(scene);
+      ss.explored.forEach(n => {
+        const el = document.getElementById(`star-${n}`);
+        if (el) el.classList.add('completed');
+      });
+      updateIntegrityProgress(scene);
+      if (ss.answered) showIntegrityAssessment(scene);
+    } else {
+      Animator.runTimeline(tl);
+    }
+  }
+
+  function enableIntegrityStars(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    scene.stars.forEach(star => {
+      const el = document.getElementById(`star-${star.n}`);
+      if (!el) return;
+      if (ss.explored.includes(star.n)) el.classList.add('completed');
+      el.addEventListener('click', () => openStarModal(star, scene));
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openStarModal(star, scene); }
+      });
+    });
+    updateIntegrityProgress(scene);
+  }
+
+  function openStarModal(star, scene) {
+    const modal = document.createElement('div');
+    modal.className = 'seat-modal';
+    let frameworkHtml = '';
+    if (star.hasFramework && star.framework) {
+      frameworkHtml = `
+        <div class="seat-modal-def-label">إطار الإدارة الرباعي</div>
+        <div class="framework-cycle">
+          ${star.framework.map((step, i) => `
+            <div class="cycle-step">
+              <div class="cycle-step-num">${arabicNumeral(i + 1)}</div>
+              <div class="cycle-step-label">${escapeHtml(step.step)}</div>
+              <div class="cycle-step-desc">${escapeHtml(step.desc)}</div>
+            </div>
+            ${i < star.framework.length - 1 ? '<div class="cycle-arrow">←</div>' : ''}
+          `).join('')}
+        </div>
+      `;
+    }
+    modal.innerHTML = `
+      <div class="seat-modal-card">
+        <div class="seat-modal-num">${star.icon}</div>
+        <div class="seat-modal-eyebrow">${star.isCenter ? 'النجم المركزي' : 'النجم ' + arabicNumeral(star.n) + ' من ' + arabicNumeral(scene.stars.length)}</div>
+        <h3 class="seat-modal-title">${escapeHtml(star.label)}</h3>
+        <div class="seat-modal-story">${escapeHtml(star.story)}</div>
+        <div class="seat-modal-def-label">التعريف الرسمي</div>
+        <div class="seat-modal-def">${escapeHtml(star.definition)}</div>
+        ${frameworkHtml}
+        <button class="seat-modal-close" type="button">فهمت</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    requestAnimationFrame(() => modal.classList.add('visible'));
+
+    const close = () => {
+      modal.classList.remove('visible');
+      setTimeout(() => modal.remove(), 300);
+      const ss = state.sceneState[state.currentScreen];
+      if (!ss.explored.includes(star.n)) {
+        ss.explored.push(star.n);
+        const el = document.getElementById(`star-${star.n}`);
+        if (el) el.classList.add('completed');
+        saveState();
+        updateIntegrityProgress(scene);
+        if (ss.explored.length === scene.stars.length && !ss.answered) {
+          setTimeout(() => {
+            document.getElementById('assessment-panel').classList.add('visible');
+            enableAssessment(scene, 'integrity');
+            document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            showToast('أحسنت! اختبر فهمك الآن', 'success');
+          }, 400);
+        }
+      }
+    };
+
+    modal.querySelector('.seat-modal-close').addEventListener('click', close);
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function escHandler(e) {
+      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
+    });
+  }
+
+  function updateIntegrityProgress(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    const total = scene.stars.length;
+    const done = ss.explored.length;
+    const txt = document.getElementById('in-progress-text');
+    if (txt) txt.textContent = `${arabicNumeral(done)} من ${arabicNumeral(total)}`;
+    const dots = document.querySelectorAll('#in-progress-dots .progress-dot');
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('filled', i < done);
+      dot.classList.toggle('all-done', done === total);
+    });
+    const prog = document.getElementById('in-progress');
+    if (prog && done === total) {
+      prog.style.borderColor = 'var(--green)';
+      prog.style.color = 'var(--green)';
+    }
+  }
+
+  function showIntegrityAssessment(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    const opts = document.querySelectorAll('#assessment-options .assessment-option');
+    opts.forEach((o, i) => {
+      o.classList.add('locked');
+      if (i === scene.assessment.correct_index) o.classList.add('correct');
+      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
+    });
+    const fb = document.getElementById('assessment-feedback');
+    const correct = ss.answer === scene.assessment.correct_index;
+    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
+    fb.innerHTML = `
+      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
+        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
+      </span>
+      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+    `;
+    document.getElementById('assessment-panel').classList.add('visible');
+  }
+
+  // ============================================================
+  // SCENE 7 — The Dilemma (Branching Scenario)
+  // ============================================================
+  function renderDilemma(scene) {
+    document.body.classList.add('cinematic');
+    const stage = $stage();
+    stage.style.opacity = '1';
+
+    if (!state.sceneState[state.currentScreen]) {
+      state.sceneState[state.currentScreen] = {
+        phaseAnswers: {}, // {phaseN: optionIdx}
+        phaseCorrect: {}, // {phaseN: bool}
+        currentPhase: 1,
+        completed: false,
+        narrationCompleted: false,
+      };
+    }
+    const ss = state.sceneState[state.currentScreen];
+
+    stage.innerHTML = `
+      <div class="scene-dilemma">
+        <div class="dilemma-header" id="dl-header">
+          <div class="dilemma-eyebrow">${scene.eyebrow}</div>
+          <h2 class="dilemma-title">${scene.hero_title}</h2>
+          <p class="dilemma-instruction">${scene.instruction}</p>
+        </div>
+        <div class="dilemma-progress" id="dl-progress">
+          ${scene.phases.map(p => `<div class="dilemma-progress-dot" data-phase="${p.n}">${arabicNumeral(p.n)}</div>`).join('')}
+        </div>
+        <div id="dl-card-container"></div>
+        <div class="dilemma-reflection" id="dl-reflection">
+          <div class="dilemma-reflection-label">تأمّل نهائي</div>
+          <div class="dilemma-reflection-prompt">${escapeHtml(scene.final_reflection)}</div>
+        </div>
+      </div>
+    `;
+
+    const reduced = Animator.reducedMotion;
+    const tl = [];
+    if (reduced) {
+      tl.push({ time: 0, fn: () => document.getElementById('dl-header').classList.add('anim-fade-in') });
+    } else {
+      tl.push({ time: 0.2, fn: () => document.getElementById('dl-header').classList.add('anim-fade-up') });
+    }
+
+    const narrationStart = reduced ? 0.5 : 2.5;
+    tl.push({ time: narrationStart, fn: () => {
+      Narrator.start(scene.narration, {
+        totalSeconds: scene.narration_total_seconds,
+        onComplete: () => {
+          ss.narrationCompleted = true;
+          saveState();
+          showDilemmaPhase(scene, ss.currentPhase || 1);
+          updateDilemmaProgress(scene);
+        },
+      });
+    }});
+
+    if (ss.narrationCompleted) {
+      Animator.clear();
+      Narrator.hideNarrator();
+      document.getElementById('subtitle-bar').classList.remove('visible');
+      updateDilemmaProgress(scene);
+      if (ss.completed) {
+        // Show final state — last phase with reflection visible
+        showDilemmaPhase(scene, scene.phases.length);
+        document.getElementById('dl-reflection').classList.add('show');
+        showDilemmaFinalCTA(scene);
+      } else {
+        showDilemmaPhase(scene, ss.currentPhase || 1);
+      }
+    } else {
+      Animator.runTimeline(tl);
+    }
+  }
+
+  function showDilemmaPhase(scene, phaseN) {
+    const phase = scene.phases.find(p => p.n === phaseN);
+    if (!phase) return;
+    const ss = state.sceneState[state.currentScreen];
+    const container = document.getElementById('dl-card-container');
+    const answered = ss.phaseAnswers[phaseN] !== undefined;
+    const selectedOpt = answered ? phase.options[ss.phaseAnswers[phaseN]] : null;
+
+    container.innerHTML = `
+      <div class="dilemma-card" id="dilemma-card-${phaseN}">
+        <div class="dilemma-card-phase">المرحلة ${arabicNumeral(phaseN)} — ${escapeHtml(phase.title)}</div>
+        <h3 class="dilemma-card-title">${escapeHtml(phase.scenario)}</h3>
+        <div class="dilemma-card-question">${escapeHtml(phase.question)}</div>
+        <div class="dilemma-options" id="dl-options">
+          ${phase.options.map((opt, i) => `
+            <button class="dilemma-option ${answered ? 'locked' : ''} ${answered && i === ss.phaseAnswers[phaseN] ? 'selected' : ''} ${answered && opt.correct ? 'correct' : ''} ${answered && i === ss.phaseAnswers[phaseN] && !opt.correct ? 'incorrect' : ''}" data-idx="${i}" type="button" ${answered ? 'disabled' : ''}>
+              <span class="dilemma-option-letter">${['أ','ب','ج','د'][i]}</span>
+              <span class="dilemma-option-text">${escapeHtml(opt.text)}</span>
+            </button>
+          `).join('')}
+        </div>
+        <div class="dilemma-consequence ${answered ? 'show ' + (selectedOpt.correct ? 'correct' : 'incorrect') : ''}" id="dl-consequence">
+          ${answered ? `<span class="dilemma-consequence-label">${selectedOpt.correct ? '✓ قرار صحيح' : '✗ قرار غير صحيح'}</span>${escapeHtml(selectedOpt.consequence)}` : ''}
+        </div>
+        <div class="dilemma-card-actions" id="dl-actions">
+          ${answered && selectedOpt.correct && phaseN < scene.phases.length ? '<button class="dilemma-action-btn show" id="dl-next" type="button">المرحلة التالية <span>←</span></button>' : ''}
+          ${answered && !selectedOpt.correct ? '<button class="dilemma-action-btn show secondary" id="dl-retry" type="button">حاول مرة أخرى</button>' : ''}
+          ${answered && selectedOpt.correct && phaseN === scene.phases.length ? '<button class="dilemma-action-btn show" id="dl-finish" type="button">عرض التأمّل النهائي <span>←</span></button>' : ''}
+        </div>
+      </div>
+    `;
+
+    if (!answered) {
+      container.querySelectorAll('.dilemma-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx, 10);
+          const opt = phase.options[idx];
+          ss.phaseAnswers[phaseN] = idx;
+          ss.phaseCorrect[phaseN] = !!opt.correct;
+          saveState();
+          // Re-render phase to show consequence
+          showDilemmaPhase(scene, phaseN);
+          updateDilemmaProgress(scene);
+          showToast(opt.correct ? 'قرار صحيح!' : 'قرار غير صحيح', opt.correct ? 'success' : 'error');
+        });
+      });
+    } else {
+      // Wire action buttons
+      const nextBtn = document.getElementById('dl-next');
+      const retryBtn = document.getElementById('dl-retry');
+      const finishBtn = document.getElementById('dl-finish');
+      if (nextBtn) {
+        nextBtn.addEventListener('click', () => {
+          const nextN = phaseN + 1;
+          ss.currentPhase = nextN;
+          saveState();
+          showDilemmaPhase(scene, nextN);
+          updateDilemmaProgress(scene);
+          document.getElementById(`dilemma-card-${nextN}`).scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+      }
+      if (retryBtn) {
+        retryBtn.addEventListener('click', () => {
+          delete ss.phaseAnswers[phaseN];
+          delete ss.phaseCorrect[phaseN];
+          saveState();
+          showDilemmaPhase(scene, phaseN);
+          updateDilemmaProgress(scene);
+        });
+      }
+      if (finishBtn) {
+        finishBtn.addEventListener('click', () => {
+          ss.completed = true;
+          saveState();
+          // Show reflection
+          document.getElementById('dl-reflection').classList.add('show');
+          showDilemmaFinalCTA(scene);
+          // Update SCORM — this is the final scene
+          const correctPhases = Object.values(ss.phaseCorrect).filter(v => v).length;
+          const totalPhases = scene.phases.length;
+          // Score for this scene = (correctPhases / totalPhases) * (100/7)
+          const sceneScore = Math.round((correctPhases / totalPhases) * (100 / CONTENT.screens.length));
+          if (!state.sceneScores) state.sceneScores = {};
+          state.sceneScores[state.currentScreen] = correctPhases === totalPhases ? 1 : 0;
+          // Recompute total
+          const correctScenes = Object.values(state.sceneScores).filter(v => v === 1).length;
+          // For partial credit on dilemma, add the partial
+          let totalScore = correctScenes * Math.round(100 / CONTENT.screens.length);
+          if (state.sceneScores[state.currentScreen] === 0 && correctPhases > 0) {
+            totalScore += Math.round((correctPhases / totalPhases) * Math.round(100 / CONTENT.screens.length));
+          }
+          totalScore = Math.min(100, totalScore);
+          window.ScormApi.setScore(totalScore, 0, 100);
+          if (correctPhases === totalPhases) {
+            window.ScormApi.setStatus('completed');
+            window.ScormApi.setStatus('passed');
+            showToast(`تهانينا! أكملت الرحلة بنجاح (${arabicNumeral(correctPhases)}/${arabicNumeral(totalPhases)} قرارات صحيحة)`, 'success');
+          } else {
+            window.ScormApi.setStatus('completed');
+            showToast(`أكملت الرحلة بـ ${arabicNumeral(correctPhases)} من ${arabicNumeral(totalPhases)} قرارات صحيحة`, 'success');
+          }
+          saveState();
+        });
+      }
+    }
+  }
+
+  function updateDilemmaProgress(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    scene.phases.forEach(p => {
+      const dot = document.querySelector(`.dilemma-progress-dot[data-phase="${p.n}"]`);
+      if (!dot) return;
+      dot.classList.remove('current', 'correct', 'incorrect');
+      if (ss.phaseCorrect[p.n] === true) dot.classList.add('correct');
+      else if (ss.phaseCorrect[p.n] === false) dot.classList.add('incorrect');
+      else if (ss.currentPhase === p.n) dot.classList.add('current');
+    });
+  }
+
+  function showDilemmaFinalCTA(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    const correctPhases = Object.values(ss.phaseCorrect).filter(v => v).length;
+    const totalPhases = scene.phases.length;
+    const allCorrect = correctPhases === totalPhases;
+    const ctaZone = $ctaZone();
+    ctaZone.classList.remove('empty');
+    ctaZone.innerHTML = `
+      <button class="cta-primary" id="cta-finish" type="button">
+        <span>${allCorrect ? 'أكملت الرحلة ✓' : 'إعادة المعضلة'}</span>
+        <span class="cta-arrow">←</span>
+      </button>
+      <div class="cta-hint">${allCorrect ? 'تهانينا على إتمام رحلة الحوكمة' : 'حاول مرة أخرى لتحسين نتيجتك'}</div>
+    `;
+    setTimeout(() => {
+      const btn = document.getElementById('cta-finish');
+      btn.classList.add('visible');
+      const h = ctaZone.querySelector('.cta-hint');
+      if (h) h.classList.add('visible');
+      btn.addEventListener('click', () => {
+        if (allCorrect) {
+          showToast('تهانينا! أكملت رحلة الحوكمة بنجاح', 'success');
+        } else {
+          // Reset dilemma
+          state.sceneState[state.currentScreen] = {
+            phaseAnswers: {}, phaseCorrect: {}, currentPhase: 1, completed: false, narrationCompleted: true,
+          };
+          saveState();
+          document.getElementById('dl-reflection').classList.remove('show');
+          ctaZone.classList.add('empty');
+          ctaZone.innerHTML = '';
+          showDilemmaPhase(scene, 1);
+          updateDilemmaProgress(scene);
+        }
+      });
+    }, 100);
+  }
+
+  // ---------- Generic Assessment Handler (scenes 3-6) ----------
+  function enableAssessment(scene, sceneType) {
+    const opts = document.querySelectorAll('#assessment-options .assessment-option');
+    opts.forEach(opt => {
+      opt.addEventListener('click', () => {
+        if (state.sceneState[state.currentScreen] && state.sceneState[state.currentScreen].answered) return;
+        const idx = parseInt(opt.dataset.idx, 10);
+        handleGenericAssessmentAnswer(idx, scene, sceneType);
+      });
+    });
+  }
+
+  function handleGenericAssessmentAnswer(idx, scene, sceneType) {
+    const ss = state.sceneState[state.currentScreen];
+    ss.answer = idx;
+    ss.answered = true;
+    const correct = idx === scene.assessment.correct_index;
+    const opts = document.querySelectorAll('#assessment-options .assessment-option');
+    opts.forEach((o, i) => {
+      o.classList.add('locked');
+      if (i === scene.assessment.correct_index) o.classList.add('correct');
+      if (i === idx && !correct) o.classList.add('incorrect');
+    });
+    const fb = document.getElementById('assessment-feedback');
+    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
+    fb.innerHTML = `
+      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
+        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
+      </span>
+      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+    `;
+    showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
+
+    // Update scene score
+    if (!state.sceneScores) state.sceneScores = {};
+    state.sceneScores[state.currentScreen] = correct ? 1 : 0;
+    const scorePerScene = Math.round(100 / CONTENT.screens.length);
+    const correctScenes = Object.values(state.sceneScores).filter(v => v === 1).length;
+    const totalScore = Math.min(100, correctScenes * scorePerScene);
+    window.ScormApi.setScore(totalScore, 0, 100);
+    saveState();
+
+    // Show next-scene CTA
+    setTimeout(() => {
+      const isLastScene = state.currentScreen >= CONTENT.screens.length - 1;
+      const ctaZone = $ctaZone();
+      ctaZone.classList.remove('empty');
+      ctaZone.innerHTML = `
+        <button class="cta-primary" id="cta-next" type="button">
+          <span>${correct ? (isLastScene ? 'أكملت الرحلة ✓' : 'التالي') : 'حاول مرة أخرى'}</span>
+          <span class="cta-arrow">←</span>
+        </button>
+        <div class="cta-hint">${correct ? (isLastScene ? 'تهانينا على إتمام الرحلة' : 'انتقل إلى المشهد التالي') : 'راجع الإجابة الصحيحة ثم تابع'}</div>
+      `;
+      setTimeout(() => {
+        const btn = document.getElementById('cta-next');
+        btn.classList.add('visible');
+        const h = ctaZone.querySelector('.cta-hint');
+        if (h) h.classList.add('visible');
+        btn.addEventListener('click', () => {
+          if (correct) {
+            if (isLastScene) {
+              showToast('تهانينا! أكملت الرحلة كاملة', 'success');
+              window.ScormApi.setStatus('completed');
+              window.ScormApi.setStatus('passed');
+            } else {
+              state.currentScreen++;
+              saveState();
+              renderScene(state.currentScreen);
+            }
+          } else {
+            // Reset assessment for retry
+            ss.answer = null;
+            ss.answered = false;
+            saveState();
+            renderScene(state.currentScreen);
+          }
+        });
+      }, 100);
+    }, 2000);
   }
 
   // ---------- Production Notes drawer ----------

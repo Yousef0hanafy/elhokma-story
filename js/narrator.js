@@ -95,6 +95,11 @@
     if (!$sub) return;
     startSpeaking();
 
+    // Speak this segment via TTS (if enabled)
+    if (global.TTS && TTS.isEnabled()) {
+      TTS.speak(seg.text);
+    }
+
     if (Narrator.reducedMotion) {
       // Show full text immediately
       $sub.innerHTML = escapeHtml(seg.text);
@@ -140,6 +145,8 @@
     Narrator.isPlaying = false;
     Narrator.isComplete = true;
     clearAllTimeouts();
+    // Cancel any in-flight TTS
+    if (global.TTS) TTS.cancel();
 
     // Show final segment immediately
     if (Narrator.segments.length > 0) {

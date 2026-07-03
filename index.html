@@ -11,6 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/animations.css">
+  <link rel="stylesheet" href="css/scenes.css">
 </head>
 <body>
 
@@ -34,12 +35,24 @@
   <!-- ===== TOP BAR ===== -->
   <header class="topbar" id="topbar" aria-hidden="true">
     <div class="topbar-inner">
-      <button class="topbar-btn" id="notes-toggle" type="button" aria-label="ملاحظات الإنتاج">
-        <span class="topbar-icon">🎬</span>
-        <span class="topbar-label">ملاحظات الإنتاج</span>
+      <!-- Right (RTL start): Scene navigation menu -->
+      <button class="topbar-btn" id="menu-toggle" type="button" aria-label="قائمة المشاهد">
+        <span class="topbar-icon">☰</span>
+        <span class="topbar-label">المشاهد</span>
       </button>
-      <div class="topbar-title">رحلة الحوكمة · الفصل الأول</div>
-      <div class="topbar-scene" id="scene-counter">المشهد ١ / ٢</div>
+      <div class="topbar-title">
+        <span id="topbar-title-text">رحلة الحوكمة · الفصل الأول</span>
+        <span class="topbar-scene-counter" id="scene-counter">المشهد ١ / ٧</span>
+      </div>
+      <!-- Left (RTL end): Audio controls -->
+      <div class="topbar-audio">
+        <button class="topbar-btn-icon" id="tts-toggle" type="button" aria-label="السرد الصوتي" title="تشغيل/إيقاف السرد الصوتي">
+          <span id="tts-icon">🔊</span>
+        </button>
+        <button class="topbar-btn-icon" id="tts-rate" type="button" aria-label="سرعة السرد" title="سرعة السرد">
+          <span id="tts-rate-label">١×</span>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -53,6 +66,7 @@
     <div class="narrator-avatar" id="narrator-avatar">
       <!-- SVG narrator portrait injected here -->
     </div>
+    <div class="narrator-name" id="narrator-name-label">د. سارة الراشد</div>
     <div class="narrator-wave" id="narrator-wave" aria-hidden="true">
       <span></span><span></span><span></span><span></span><span></span>
     </div>
@@ -70,10 +84,23 @@
   <!-- ===== CTA ZONE ===== -->
   <div class="cta-zone" id="cta-zone" aria-live="polite"></div>
 
-  <!-- ===== PRODUCTION NOTES DRAWER ===== -->
+  <!-- ===== SCENE NAVIGATION DRAWER ===== -->
+  <aside class="scene-drawer" id="scene-drawer" aria-hidden="true" aria-labelledby="scene-drawer-title">
+    <div class="scene-drawer-header">
+      <div class="scene-drawer-title" id="scene-drawer-title">رحلتك حتى الآن</div>
+      <button class="scene-drawer-close" id="scene-drawer-close" type="button" aria-label="إغلاق">✕</button>
+    </div>
+    <div class="scene-drawer-body" id="scene-drawer-body"></div>
+    <div class="scene-drawer-footer">
+      <button class="scene-drawer-restart" id="scene-drawer-restart" type="button">إعادة الرحلة من البداية</button>
+    </div>
+  </aside>
+  <div class="scene-drawer-backdrop" id="scene-drawer-backdrop" aria-hidden="true"></div>
+
+  <!-- ===== PRODUCTION NOTES DRAWER (dev mode only) ===== -->
   <aside class="notes-drawer" id="notes-drawer" aria-hidden="true" aria-labelledby="notes-title">
     <div class="notes-header">
-      <div class="notes-title" id="notes-title">🎬 ملاحظات الإنتاج</div>
+      <div class="notes-title" id="notes-title">🎬 ملاحظات الإنتاج <span class="dev-badge">DEV</span></div>
       <button class="notes-close" id="notes-close" type="button" aria-label="إغلاق">✕</button>
     </div>
     <div class="notes-body" id="notes-body"></div>
@@ -84,6 +111,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="js/scorm-api.js"></script>
+  <script src="js/tts.js"></script>
   <script src="js/content.js"></script>
   <script src="js/narrator.js"></script>
   <script src="js/animator.js"></script>

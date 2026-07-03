@@ -1,0 +1,1063 @@
+/* =====================================================================
+   رحلة الحوكمة — Scene-specific styles for scenes 3-7
+   Loaded after style.css
+   ===================================================================== */
+
+/* ============================================================
+   SCENE 3 — Building the Framework (Layered Ziggurat)
+   ============================================================ */
+.scene-framework {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 0 8px;
+}
+.framework-header {
+  text-align: center;
+  max-width: 700px;
+  opacity: 0;
+}
+.framework-eyebrow {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  opacity: 0.9;
+}
+.framework-title {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 3.5vw, 32px);
+  font-weight: 800;
+  color: var(--cream);
+  margin-bottom: 6px;
+  line-height: 1.2;
+}
+.framework-instruction {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 600px;
+  line-height: 1.6;
+}
+.framework-tower {
+  display: flex;
+  flex-direction: column-reverse; /* layer 1 at bottom */
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 540px;
+  margin: 8px 0;
+  position: relative;
+}
+.framework-layer {
+  width: 100%;
+  background: linear-gradient(135deg, rgba(212,175,55,0.15), rgba(212,175,55,0.05));
+  border: 1.5px solid var(--gold-dim);
+  border-radius: 10px;
+  padding: 14px 18px;
+  cursor: pointer;
+  transition: all 0.3s;
+  opacity: 0;
+  transform: translateY(20px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: right;
+  font-family: var(--font-body);
+  color: var(--cream);
+  position: relative;
+  overflow: hidden;
+}
+/* Each layer gets progressively wider (bottom = widest) */
+.framework-layer[data-layer="1"] { width: 100%; }
+.framework-layer[data-layer="2"] { width: 96%; }
+.framework-layer[data-layer="3"] { width: 92%; }
+.framework-layer[data-layer="4"] { width: 88%; }
+.framework-layer[data-layer="5"] { width: 84%; }
+.framework-layer[data-layer="6"] { width: 80%; }
+.framework-layer.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+.framework-layer:hover:not(.locked) {
+  background: linear-gradient(135deg, rgba(212,175,55,0.25), rgba(212,175,55,0.1));
+  border-color: var(--gold);
+  transform: translateY(-2px);
+}
+.framework-layer.glowing {
+  background: linear-gradient(135deg, rgba(212,175,55,0.35), rgba(212,175,55,0.15));
+  border-color: var(--gold);
+  box-shadow: 0 0 24px rgba(212, 175, 55, 0.4);
+}
+.framework-layer.completed {
+  background: linear-gradient(135deg, rgba(129, 199, 132, 0.15), rgba(129, 199, 132, 0.05));
+  border-color: var(--green);
+}
+.framework-layer.locked { cursor: default; }
+.framework-layer-num {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: rgba(212, 175, 55, 0.15);
+  border: 1.5px solid var(--gold-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 18px;
+  color: var(--gold);
+  flex-shrink: 0;
+}
+.framework-layer.completed .framework-layer-num {
+  background: var(--green);
+  border-color: var(--green);
+  color: var(--bg-deep);
+}
+.framework-layer-label {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cream);
+}
+.framework-layer-check {
+  color: var(--green);
+  font-size: 16px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  flex-shrink: 0;
+}
+.framework-layer.completed .framework-layer-check { opacity: 1; }
+
+.framework-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--rule);
+  border-radius: 50px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--cream-dim);
+  opacity: 0;
+}
+.framework-progress.visible { opacity: 1; transition: opacity 0.4s; }
+
+@media (max-width: 640px) {
+  .framework-layer { padding: 12px 14px; gap: 10px; }
+  .framework-layer-num { width: 32px; height: 32px; font-size: 16px; }
+  .framework-layer-label { font-size: 13px; }
+}
+
+/* ============================================================
+   SCENE 4 — Twin Pillars (Governance + Compliance)
+   ============================================================ */
+.scene-pillars {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 0 8px;
+}
+.pillars-header {
+  text-align: center;
+  max-width: 700px;
+  opacity: 0;
+}
+.pillars-eyebrow {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.pillars-title {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 3.5vw, 32px);
+  font-weight: 800;
+  color: var(--cream);
+  margin-bottom: 6px;
+  line-height: 1.2;
+}
+.pillars-instruction {
+  font-family: var(--font-editorial);
+  font-size: 14px;
+  color: var(--gold-soft);
+  max-width: 600px;
+  line-height: 1.7;
+  font-style: italic;
+}
+.pillars-stage {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  max-width: 760px;
+  position: relative;
+  margin: 8px 0;
+  min-height: 320px;
+}
+.pillars-arch {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-30px);
+  width: 70%;
+  height: 30px;
+  background: linear-gradient(180deg, var(--gold), var(--gold-soft));
+  border-radius: 100px 100px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--bg-deep);
+  opacity: 0;
+  transition: opacity 0.6s ease, transform 0.6s ease;
+  letter-spacing: 0.05em;
+  box-shadow: 0 0 24px rgba(212, 175, 55, 0.4);
+}
+.pillars-arch.descended {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.pillar {
+  flex: 1;
+  max-width: 340px;
+  background: linear-gradient(180deg, rgba(212,175,55,0.18), rgba(212,175,55,0.05));
+  border: 1.5px solid var(--gold-dim);
+  border-radius: 14px 14px 6px 6px;
+  padding: 18px 16px;
+  cursor: pointer;
+  transition: all 0.3s;
+  opacity: 0;
+  transform: translateY(40px);
+  text-align: center;
+  font-family: var(--font-body);
+  position: relative;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+}
+.pillar.comp {
+  background: linear-gradient(180deg, rgba(79,195,209,0.18), rgba(79,195,209,0.05));
+  border-color: var(--teal-dim);
+}
+.pillar.revealed { opacity: 1; transform: translateY(0); }
+.pillar:hover:not(.locked) {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+}
+.pillar.gov:hover:not(.locked) { border-color: var(--gold); }
+.pillar.comp:hover:not(.locked) { border-color: var(--teal); }
+.pillar.glowing.gov { border-color: var(--gold); box-shadow: 0 0 24px rgba(212,175,55,0.5); }
+.pillar.glowing.comp { border-color: var(--teal); box-shadow: 0 0 24px rgba(79,195,209,0.5); }
+.pillar.dimmed { opacity: 0.4; transform: scale(0.96); }
+.pillar.expanded {
+  cursor: default;
+  min-height: 280px;
+}
+.pillar.locked { cursor: default; }
+.pillar-icon {
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 22px;
+  background: rgba(212, 175, 55, 0.15);
+  border: 2px solid var(--gold);
+  color: var(--gold);
+}
+.pillar.comp .pillar-icon {
+  background: rgba(79, 195, 209, 0.15);
+  border-color: var(--teal);
+  color: var(--teal);
+}
+.pillar-label {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--cream);
+}
+.pillar-subtitle {
+  font-family: var(--font-editorial);
+  font-size: 13px;
+  color: var(--gold-soft);
+  font-style: italic;
+}
+.pillar.comp .pillar-subtitle { color: var(--teal); }
+.pillar-question {
+  font-family: var(--font-display);
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  padding: 6px 10px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 8px;
+  margin-top: 4px;
+}
+.pillar-facets {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(244,236,216,0.1);
+  text-align: right;
+}
+.pillar.expanded .pillar-facets { display: flex; }
+.pillar-facet {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--cream-dim);
+  line-height: 1.5;
+  padding: 4px 0;
+}
+.pillar-facet::before {
+  content: '◆';
+  color: var(--gold);
+  flex-shrink: 0;
+  font-size: 10px;
+  margin-top: 3px;
+}
+.pillar.comp .pillar-facet::before { color: var(--teal); }
+
+.pillars-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--rule);
+  border-radius: 50px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--cream-dim);
+  opacity: 0;
+}
+.pillars-progress.visible { opacity: 1; transition: opacity 0.4s; }
+
+@media (max-width: 640px) {
+  .pillars-stage {
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .pillar { width: 100%; max-width: 380px; min-height: 140px; }
+  .pillar.expanded { min-height: 240px; }
+  .pillars-arch { width: 90%; }
+  .pillar-label { font-size: 18px; }
+  .pillar-icon { width: 40px; height: 40px; font-size: 18px; }
+}
+
+/* ============================================================
+   SCENE 5 — Decision Court (Classification Cards)
+   ============================================================ */
+.scene-court {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 0 8px;
+}
+.court-header {
+  text-align: center;
+  max-width: 700px;
+  opacity: 0;
+}
+.court-eyebrow {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.court-title {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 3.5vw, 32px);
+  font-weight: 800;
+  color: var(--cream);
+  margin-bottom: 6px;
+  line-height: 1.2;
+}
+.court-scenario {
+  font-family: var(--font-editorial);
+  font-size: 14px;
+  color: var(--cream-dim);
+  max-width: 600px;
+  line-height: 1.7;
+  padding: 12px 14px;
+  background: rgba(212, 175, 55, 0.06);
+  border-right: 3px solid var(--gold);
+  border-radius: 4px;
+  font-style: italic;
+  text-align: right;
+}
+.court-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--rule);
+  border-radius: 50px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  color: var(--cream-dim);
+}
+.court-progress-dot {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(244,236,216,0.2);
+  background: rgba(244,236,216,0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--cream-dim);
+}
+.court-progress-dot.current {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: var(--bg-deep);
+}
+.court-progress-dot.correct {
+  border-color: var(--green);
+  background: var(--green-dim);
+  color: var(--green);
+}
+.court-progress-dot.incorrect {
+  border-color: var(--rose);
+  background: var(--rose-dim);
+  color: var(--rose);
+}
+.court-card {
+  width: 100%;
+  max-width: 600px;
+  background: linear-gradient(180deg, var(--bg-mid) 0%, var(--bg-deep) 100%);
+  border: 1px solid var(--gold-dim);
+  border-radius: 18px;
+  padding: 24px 20px;
+  text-align: right;
+  position: relative;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  animation: court-card-in 0.5s ease forwards;
+}
+@keyframes court-card-in {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.court-card-num {
+  position: absolute;
+  top: -14px;
+  right: 20px;
+  background: var(--gold);
+  color: var(--bg-deep);
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 13px;
+  padding: 4px 12px;
+  border-radius: 12px;
+  letter-spacing: 0.05em;
+}
+.court-card-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  color: var(--gold);
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+.court-card-action {
+  font-family: var(--font-display);
+  font-size: 17px;
+  color: var(--cream);
+  line-height: 1.6;
+  font-weight: 600;
+  margin-bottom: 18px;
+}
+.court-buttons {
+  display: flex;
+  gap: 10px;
+}
+.court-btn {
+  flex: 1;
+  padding: 14px;
+  border-radius: 12px;
+  border: 2px solid;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-height: 56px;
+}
+.court-btn.gov {
+  background: rgba(212, 175, 55, 0.1);
+  border-color: var(--gold-dim);
+  color: var(--gold);
+}
+.court-btn.gov:hover:not(.locked) {
+  background: rgba(212, 175, 55, 0.2);
+  border-color: var(--gold);
+  transform: scale(1.02);
+}
+.court-btn.comp {
+  background: rgba(79, 195, 209, 0.1);
+  border-color: var(--teal-dim);
+  color: var(--teal);
+}
+.court-btn.comp:hover:not(.locked) {
+  background: rgba(79, 195, 209, 0.2);
+  border-color: var(--teal);
+  transform: scale(1.02);
+}
+.court-btn.locked { cursor: default; opacity: 0.6; }
+.court-btn.selected.gov { background: var(--gold); color: var(--bg-deep); }
+.court-btn.selected.comp { background: var(--teal); color: var(--bg-deep); }
+.court-btn-icon { display: block; font-size: 20px; margin-bottom: 4px; }
+
+.court-verdict {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  display: none;
+  border-right: 3px solid;
+  animation: fade-up 0.4s ease;
+}
+.court-verdict.show { display: block; }
+.court-verdict.correct {
+  background: var(--green-dim);
+  color: var(--cream);
+  border-color: var(--green);
+}
+.court-verdict.incorrect {
+  background: var(--rose-dim);
+  color: var(--cream);
+  border-color: var(--rose);
+}
+.court-verdict-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.court-verdict.correct .court-verdict-label { color: var(--green); }
+.court-verdict.incorrect .court-verdict-label { color: var(--rose); }
+
+@media (max-width: 640px) {
+  .court-card { padding: 20px 16px; }
+  .court-card-action { font-size: 15px; }
+  .court-btn { padding: 12px 8px; font-size: 13px; min-height: 50px; }
+}
+
+/* ============================================================
+   SCENE 6 — Integrity Map (Star Constellation)
+   ============================================================ */
+.scene-integrity {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 0 8px;
+}
+.integrity-header {
+  text-align: center;
+  max-width: 700px;
+  opacity: 0;
+}
+.integrity-eyebrow {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.integrity-title {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 3.5vw, 32px);
+  font-weight: 800;
+  color: var(--cream);
+  margin-bottom: 6px;
+  line-height: 1.2;
+}
+.integrity-instruction {
+  font-family: var(--font-editorial);
+  font-size: 13px;
+  color: var(--gold-soft);
+  max-width: 600px;
+  line-height: 1.7;
+  font-style: italic;
+}
+.integrity-stage {
+  width: 100%;
+  max-width: 560px;
+  position: relative;
+  aspect-ratio: 1 / 1;
+  margin: 4px 0;
+}
+.integrity-svg { width: 100%; height: 100%; display: block; }
+.integrity-star {
+  cursor: pointer;
+  transition: opacity 0.3s;
+}
+.integrity-star .star-circle {
+  transition: r 0.3s, fill 0.3s, stroke 0.3s;
+}
+.integrity-star:hover .star-circle { r: 30; }
+.integrity-star.glowing .star-circle {
+  fill: var(--gold);
+  filter: drop-shadow(0 0 12px var(--gold));
+}
+.integrity-star.completed .star-circle {
+  fill: var(--green-dim);
+  stroke: var(--green);
+}
+.integrity-star.completed .star-check { opacity: 1; }
+.star-circle {
+  fill: rgba(244, 236, 216, 0.06);
+  stroke: var(--cream-dim);
+  stroke-width: 1.5;
+}
+.star-icon {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 800;
+  fill: var(--cream);
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+.star-label {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--cream-dim);
+  text-anchor: middle;
+  pointer-events: none;
+}
+.star-check {
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+  font-size: 14px;
+  font-weight: 800;
+  fill: var(--green);
+  text-anchor: middle;
+}
+.star-center .star-circle {
+  fill: rgba(212, 175, 55, 0.2);
+  stroke: var(--gold);
+  stroke-width: 2;
+}
+.star-center .star-icon {
+  fill: var(--gold);
+  font-size: 22px;
+}
+.star-center .star-label {
+  fill: var(--gold);
+  font-size: 11px;
+  font-weight: 700;
+}
+.star-twinkle {
+  animation: twinkle 3s ease-in-out infinite;
+}
+@keyframes twinkle {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+.star-bg-dot {
+  fill: rgba(244, 236, 216, 0.3);
+  animation: twinkle 4s ease-in-out infinite;
+}
+.integrity-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--rule);
+  border-radius: 50px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--cream-dim);
+  opacity: 0;
+}
+.integrity-progress.visible { opacity: 1; transition: opacity 0.4s; }
+
+/* Framework cycle inside star 3 modal */
+.framework-cycle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 14px 0;
+  padding: 14px;
+  background: rgba(212, 175, 55, 0.06);
+  border-radius: 12px;
+  flex-wrap: wrap;
+}
+.cycle-step {
+  flex: 1;
+  min-width: 70px;
+  text-align: center;
+  position: relative;
+}
+.cycle-step-num {
+  width: 32px; height: 32px;
+  margin: 0 auto 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: var(--bg-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 14px;
+}
+.cycle-step-label {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold);
+  margin-bottom: 2px;
+}
+.cycle-step-desc {
+  font-size: 11px;
+  color: var(--cream-dim);
+  line-height: 1.4;
+}
+.cycle-arrow {
+  color: var(--gold);
+  font-size: 16px;
+  align-self: center;
+  margin-top: -10px;
+}
+
+@media (max-width: 640px) {
+  .integrity-stage { max-width: 100%; }
+  .star-icon { font-size: 14px; }
+  .star-label { font-size: 9px; }
+  .star-center .star-icon { font-size: 18px; }
+  .framework-cycle { gap: 4px; padding: 10px; }
+  .cycle-step { min-width: 60px; }
+  .cycle-step-num { width: 28px; height: 28px; font-size: 12px; }
+  .cycle-step-label { font-size: 11px; }
+  .cycle-step-desc { font-size: 10px; }
+  .cycle-arrow { display: none; }
+}
+
+/* ============================================================
+   SCENE 7 — The Dilemma (Branching Scenario)
+   ============================================================ */
+.scene-dilemma {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 0 8px;
+}
+.dilemma-header {
+  text-align: center;
+  max-width: 700px;
+  opacity: 0;
+}
+.dilemma-eyebrow {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.dilemma-title {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 3.5vw, 32px);
+  font-weight: 800;
+  color: var(--cream);
+  margin-bottom: 6px;
+  line-height: 1.2;
+}
+.dilemma-instruction {
+  font-family: var(--font-editorial);
+  font-size: 13px;
+  color: var(--gold-soft);
+  max-width: 600px;
+  line-height: 1.7;
+  font-style: italic;
+}
+.dilemma-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--rule);
+  border-radius: 50px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  color: var(--cream-dim);
+}
+.dilemma-progress-dot {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(244,236,216,0.2);
+  background: rgba(244,236,216,0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--cream-dim);
+}
+.dilemma-progress-dot.current {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: var(--bg-deep);
+}
+.dilemma-progress-dot.correct {
+  border-color: var(--green);
+  background: var(--green-dim);
+  color: var(--green);
+}
+.dilemma-card {
+  width: 100%;
+  max-width: 640px;
+  background: linear-gradient(180deg, var(--bg-mid) 0%, var(--bg-deep) 100%);
+  border: 1px solid var(--gold-dim);
+  border-radius: 18px;
+  padding: 24px 20px;
+  text-align: right;
+  position: relative;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  animation: dilemma-card-in 0.5s ease forwards;
+}
+@keyframes dilemma-card-in {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.dilemma-card-phase {
+  display: inline-block;
+  background: var(--gold);
+  color: var(--bg-deep);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  letter-spacing: 0.1em;
+  margin-bottom: 10px;
+}
+.dilemma-card-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--cream);
+  margin-bottom: 12px;
+  line-height: 1.3;
+}
+.dilemma-card-scenario {
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--cream-dim);
+  line-height: 1.7;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 10px;
+  border-right: 3px solid var(--gold);
+}
+.dilemma-card-question {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--cream);
+  margin-bottom: 14px;
+}
+.dilemma-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dilemma-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(244, 236, 216, 0.04);
+  border: 1.5px solid rgba(244, 236, 216, 0.1);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: right;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--cream);
+  width: 100%;
+  min-height: 48px;
+}
+.dilemma-option:hover:not(.locked) {
+  background: rgba(212, 175, 55, 0.08);
+  border-color: var(--gold-dim);
+}
+.dilemma-option.selected { background: rgba(212, 175, 55, 0.15); border-color: var(--gold); }
+.dilemma-option.correct {
+  background: var(--green-dim);
+  border-color: var(--green);
+  color: var(--green);
+  font-weight: 600;
+}
+.dilemma-option.incorrect {
+  background: var(--rose-dim);
+  border-color: var(--rose);
+  color: var(--rose);
+}
+.dilemma-option.locked { cursor: default; }
+.dilemma-option-letter {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: rgba(244, 236, 216, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+  color: var(--gold);
+}
+.dilemma-option.correct .dilemma-option-letter { background: var(--green); color: var(--bg-deep); }
+.dilemma-option.incorrect .dilemma-option-letter { background: var(--rose); color: var(--bg-deep); }
+.dilemma-option-text { flex: 1; line-height: 1.5; }
+.dilemma-consequence {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  display: none;
+  border-right: 3px solid;
+  animation: fade-up 0.4s ease;
+}
+.dilemma-consequence.show { display: block; }
+.dilemma-consequence.correct {
+  background: var(--green-dim);
+  color: var(--cream);
+  border-color: var(--green);
+}
+.dilemma-consequence.incorrect {
+  background: var(--rose-dim);
+  color: var(--cream);
+  border-color: var(--rose);
+}
+.dilemma-consequence-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.dilemma-consequence.correct .dilemma-consequence-label { color: var(--green); }
+.dilemma-consequence.incorrect .dilemma-consequence-label { color: var(--rose); }
+.dilemma-card-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.dilemma-action-btn {
+  background: linear-gradient(135deg, var(--gold) 0%, var(--gold-soft) 100%);
+  color: var(--bg-deep);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 0.15s;
+  min-height: 40px;
+  display: none;
+}
+.dilemma-action-btn.show { display: inline-flex; align-items: center; gap: 6px; }
+.dilemma-action-btn:hover { transform: scale(1.03); }
+.dilemma-action-btn.secondary {
+  background: transparent;
+  border: 1px solid var(--gold-dim);
+  color: var(--gold);
+}
+
+.dilemma-reflection {
+  width: 100%;
+  max-width: 640px;
+  background: linear-gradient(135deg, rgba(212,175,55,0.08), rgba(212,175,55,0.02));
+  border: 1px solid var(--gold-dim);
+  border-radius: 18px;
+  padding: 20px;
+  text-align: right;
+  display: none;
+  animation: fade-up 0.5s ease;
+}
+.dilemma-reflection.show { display: block; }
+.dilemma-reflection-label {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+}
+.dilemma-reflection-prompt {
+  font-family: var(--font-editorial);
+  font-size: 15px;
+  color: var(--cream);
+  line-height: 1.8;
+  font-style: italic;
+}
+
+@media (max-width: 640px) {
+  .dilemma-card { padding: 18px 14px; }
+  .dilemma-card-title { font-size: 18px; }
+  .dilemma-card-scenario { font-size: 13px; padding: 10px 12px; }
+  .dilemma-option { padding: 10px 12px; font-size: 12px; }
+}
