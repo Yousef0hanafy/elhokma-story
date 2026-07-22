@@ -18,6 +18,21 @@ window.STORY_CONTENT = {
     audience: 'أعضاء مجالس الإدارة والعاملون في القطاع الصحي',
     duration_label: 'تُقدَّر الرحلة بـ ٤٥ دقيقة',
     passing_score: 70,
+
+    // ---------- Course Versioning ----------
+    // Semantic version of the CONTENT (not the code). Bump this when
+    // narration scripts, assessment questions, or definitions change.
+    // The completion record captures this version so auditors can verify
+    // which training content a learner was assessed against.
+    //
+    // Format: MAJOR.MINOR.PATCH
+    //  MAJOR — structural change (new/removed scenes, different passing score)
+    //  MINOR — content change (reworded questions, updated definitions)
+    //  PATCH — typo/fix (no learning-impact change)
+    version: '1.0.0',
+
+    // Human-readable release identifier shown on the completion screen.
+    version_label: 'إصدار ١.٠.٠',
   },
 
   screens: [

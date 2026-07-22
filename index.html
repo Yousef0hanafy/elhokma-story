@@ -91,8 +91,11 @@
         <span id="topbar-title-text">رحلة الحوكمة · الفصل الأول</span>
         <span class="topbar-scene-counter" id="scene-counter">المشهد ١ / ٧</span>
       </div>
-      <!-- Left (RTL end): Audio controls -->
+      <!-- Left (RTL end): Hub + Audio controls -->
       <div class="topbar-audio">
+        <button class="topbar-btn-icon" id="hub-toggle" type="button" aria-label="مركز التعلم" title="مركز التعلم — المفاهيم والمراجعة">
+          <span>✦</span>
+        </button>
         <button class="topbar-btn-icon" id="tts-toggle" type="button" aria-label="السرد الصوتي" title="تشغيل/إيقاف السرد الصوتي">
           <span id="tts-icon">🔊</span>
         </button>
@@ -102,6 +105,14 @@
       </div>
     </div>
   </header>
+
+  <!-- ===== REVIEW MODE BANNER (shown only in review mode) ===== -->
+  <div class="review-banner" id="review-banner" aria-hidden="true">
+    <div class="review-banner-inner">
+      <span class="review-banner-label">وضع المراجعة — لن تؤثر تصرفاتك على درجتك</span>
+      <button class="review-banner-exit" id="review-exit-btn" type="button">إنهاء المراجعة</button>
+    </div>
+  </div>
 
   <!-- ===== SCENE STAGE ===== -->
   <main class="stage" id="stage" role="main" aria-live="polite">
@@ -181,12 +192,23 @@
     </div>
   </div>
 
+  <!-- ===== LEARNING HUB DRAWER ===== -->
+  <aside class="learning-hub" id="learning-hub" aria-hidden="true" aria-labelledby="learning-hub-title">
+    <div class="learning-hub-header">
+      <div class="learning-hub-title" id="learning-hub-title">مركز التعلم</div>
+      <button class="learning-hub-close" id="learning-hub-close" type="button" aria-label="إغلاق">✕</button>
+    </div>
+    <div class="learning-hub-body" id="learning-hub-body"></div>
+  </aside>
+  <div class="learning-hub-backdrop" id="learning-hub-backdrop" aria-hidden="true"></div>
+
   <!-- ===== TOAST ===== -->
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="js/error-boundary.js"></script>
   <script src="js/scorm-api.js"></script>
   <script src="js/scoring.js"></script>
+  <script src="js/version.js"></script>
   <script src="js/tts.js"></script>
   <script src="js/content.js"></script>
   <script src="js/narrator.js"></script>

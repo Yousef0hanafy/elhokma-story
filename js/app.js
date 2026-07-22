@@ -15,14 +15,21 @@
   // ---------- State ----------
   const state = {
     currentScreen: 0, // index into CONTENT.screens
-    exploredSeats: [], // seat numbers explored on screen 2
-    assessmentAnswer: null, // index of selected answer (current scene)
-    assessmentAnswered: false,
-    narrationCompleted: false,
-    seatsRevealed: false,
-    sceneScores: {}, // {screenIndex: 1 or 0}
+    exploredSeats: [], // seat numbers explored on screen 2 (legacy, synced from sceneState[1])
+    assessmentAnswer: null, // index of selected answer (current scene) (legacy)
+    assessmentAnswered: false, // (legacy)
+    narrationCompleted: false, // (legacy)
+    seatsRevealed: false, // (legacy)
+    sceneScores: {}, // {screenIndex: 1 or 0 or fraction}
     sceneState: {}, // {screenIndex: {explored: [], answered: bool, ...}}
+    completion: null, // {version, date, score} — stamped on course completion
+    reviewMode: false, // true when revisiting completed scenes (non-scoring)
   };
+
+  // Expose state for the Version module (which stamps completion records).
+  // Using a global reference rather than passing state around keeps the
+  // module boundary clean while avoiding circular dependencies.
+  window.__APP_STATE__ = state;
 
   const $stage = () => document.getElementById('stage');
   const $ctaZone = () => document.getElementById('cta-zone');
@@ -94,6 +101,7 @@
     bindGlobalEvents();
     bindNavigation();
     bindTTSControls();
+    bindLearningHub();
 
     // Hide loader after 1.2s (let fonts load)
     setTimeout(() => {
@@ -119,6 +127,10 @@
       if (data.currentScreen !== undefined) state.currentScreen = data.currentScreen;
       if (data.sceneScores) state.sceneScores = data.sceneScores;
       if (data.sceneState) state.sceneState = data.sceneState;
+      // Completion record (version-stamped). May be absent in older saves.
+      if (data.completion && typeof data.completion === 'object') {
+        state.completion = data.completion;
+      }
 
       // ---------- Boardroom legacy state migration ----------
       // Scenes 3-7 always used state.sceneState[idx]. Scene 2 (boardroom)
@@ -207,6 +219,8 @@
       // Current state model
       sceneScores: state.sceneScores || {},
       sceneState: state.sceneState || {},
+      // Versioned completion record (absent until first completion)
+      completion: state.completion || null,
     });
   }
 
@@ -224,6 +238,8 @@
         if (notesDrawer && notesDrawer.classList.contains('visible')) closeNotes();
         const sd = document.getElementById('scene-drawer');
         if (sd && sd.classList.contains('visible')) closeSceneDrawer();
+        const hub = document.getElementById('learning-hub');
+        if (hub && hub.classList.contains('visible')) closeLearningHub();
       }
       // Keyboard navigation: Alt+← (previous scene), Alt+→ (next scene).
       // Only works if the target scene is unlocked. Doesn't interfere with
@@ -1143,11 +1159,17 @@
 
   function handleBoardroomAssessmentAnswer(idx, scene) {
     const ss = state.sceneState[state.currentScreen];
-    ss.answer = idx;
-    ss.answered = true;
     const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
+    // In review mode, don't persist answers or update scores.
+    if (state.reviewMode) {
+      setTimeout(() => showReviewReturnCTA(scene), 2000);
+      return;
+    }
+
+    ss.answer = idx;
+    ss.answered = true;
     // Record score via the centralized Scoring module.
     Scoring.recordAndCommit(state.currentScreen, correct);
     saveState();
@@ -2092,9 +2114,12 @@
         btn.addEventListener('click', () => {
           const idx = parseInt(btn.dataset.idx, 10);
           const opt = phase.options[idx];
-          ss.phaseAnswers[phaseN] = idx;
-          ss.phaseCorrect[phaseN] = !!opt.correct;
-          saveState();
+          // In review mode, show the consequence but don't persist.
+          if (!state.reviewMode) {
+            ss.phaseAnswers[phaseN] = idx;
+            ss.phaseCorrect[phaseN] = !!opt.correct;
+            saveState();
+          }
           // Re-render phase to show consequence
           showDilemmaPhase(scene, phaseN);
           updateDilemmaProgress(scene);
@@ -2209,17 +2234,47 @@
 
   function handleGenericAssessmentAnswer(idx, scene, sceneType) {
     const ss = state.sceneState[state.currentScreen];
-    ss.answer = idx;
-    ss.answered = true;
     const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
+    // In review mode, don't persist answers or update scores.
+    if (state.reviewMode) {
+      setTimeout(() => showReviewReturnCTA(scene), 2000);
+      return;
+    }
+
+    ss.answer = idx;
+    ss.answered = true;
     // Record score via the centralized Scoring module.
     Scoring.recordAndCommit(state.currentScreen, correct);
     saveState();
 
     // After delay, show the shared advance/retry CTA.
     setTimeout(() => showAdvanceOrRetryCTA(scene, correct), 2000);
+  }
+
+  // In review mode, after answering an assessment, show a "return to hub"
+  // CTA instead of the advance/retry CTA. This makes it clear the answer
+  // didn't count and gives the learner an easy way back.
+  function showReviewReturnCTA(scene) {
+    const ctaZone = $ctaZone();
+    ctaZone.classList.remove('empty');
+    ctaZone.innerHTML = `
+      <button class="cta-primary" id="cta-review-return" type="button">
+        <span>العودة إلى مركز التعلم</span>
+        <span class="cta-arrow">←</span>
+      </button>
+      <div class="cta-hint">وضع المراجعة — لم تُحتسب إجابتك</div>
+    `;
+    setTimeout(() => {
+      const btn = document.getElementById('cta-review-return');
+      btn.classList.add('visible');
+      const h = ctaZone.querySelector('.cta-hint');
+      if (h) h.classList.add('visible');
+      btn.addEventListener('click', () => {
+        openLearningHub();
+      });
+    }, 100);
   }
 
   // ---------- In-place assessment reset (no re-render) ----------
@@ -2465,7 +2520,11 @@
     const score = Scoring.compute();
     const passingScore = CONTENT.course.passing_score || 70;
     const passed = score >= passingScore;
-    const status = window.ScormApi.getStatus();
+
+    // Stamp the completion record with the current content version.
+    // This must happen before SCORM status is set so the record is persisted.
+    if (window.Version) Version.stampCompletion(score);
+    saveState();
 
     // Set final SCORM status
     if (passed) {
@@ -2480,6 +2539,10 @@
     Narrator.skipRequested = true;
     Narrator.hideNarrator();
     Animator.clear();
+
+    // Exit review mode if active
+    state.reviewMode = false;
+    document.body.classList.remove('review-mode');
 
     // Hide subtitle bar and CTA zone
     document.getElementById('subtitle-bar').classList.remove('visible', 'controls-visible');
@@ -2498,6 +2561,10 @@
     });
 
     const studentName = window.ScormApi.getStudentName() || 'المتعلم';
+    const versionLabel = window.Version ? Version.label() : '';
+    const staleNotice = window.Version && Version.isStale()
+      ? `<div class="completion-stale-notice">أكملت نسخة سابقة من المحتوى. يوصى بمراجعة النسخة المحدّثة.</div>`
+      : '';
 
     stage.innerHTML = `
       <div class="completion-screen" role="main" aria-live="polite">
@@ -2510,6 +2577,7 @@
         <div class="completion-eyebrow">${passed ? 'تهانينا! لقد اجتزت الرحلة' : 'أكملت الرحلة'}</div>
         <h1 class="completion-title">${escapeHtml(CONTENT.course.title)}</h1>
         <div class="completion-subtitle">${escapeHtml(CONTENT.course.subtitle)}</div>
+        ${staleNotice}
 
         <div class="completion-score-card">
           <div class="completion-score-label">نتيجتك النهائية</div>
@@ -2532,12 +2600,19 @@
             <span class="completion-meta-label">المشاهد المكتملة</span>
             <span class="completion-meta-value">${arabicNumeral(Object.keys(state.sceneScores || {}).length)} من ${arabicNumeral(CONTENT.screens.length)}</span>
           </div>
+          <div class="completion-meta-row">
+            <span class="completion-meta-label">إصدار المحتوى</span>
+            <span class="completion-meta-value">${escapeHtml(versionLabel)}</span>
+          </div>
         </div>
 
         <div class="completion-actions">
           <button class="cta-primary visible" id="completion-print" type="button">
             <span>طباعة الشهادة</span>
             <span class="cta-arrow">←</span>
+          </button>
+          <button class="completion-secondary" id="completion-review" type="button">
+            مراجعة المحتوى
           </button>
           <button class="completion-secondary" id="completion-restart" type="button">
             إعادة الرحلة
@@ -2553,6 +2628,7 @@
               <div class="print-certificate-name">${escapeHtml(studentName)}</div>
               <div class="print-certificate-score">النتيجة: ${arabicNumeral(score)} / ١٠٠</div>
               <div class="print-certificate-date">${escapeHtml(dateStr)}</div>
+              <div class="print-certificate-version">${escapeHtml(versionLabel)}</div>
               <div class="print-certificate-status">${passed ? 'اجتاز بنجاح' : 'أكمل البرنامج'}</div>
             </div>
           </div>
@@ -2562,11 +2638,221 @@
 
     // Wire buttons
     document.getElementById('completion-print').addEventListener('click', () => window.print());
+    document.getElementById('completion-review').addEventListener('click', () => {
+      // Enter review mode and go to the Learning Hub
+      enterReviewMode();
+      openLearningHub();
+    });
     document.getElementById('completion-restart').addEventListener('click', () => {
       if (confirm('هل تريد إعادة الرحلة من البداية؟ سيتم مسح تقدّمك الحالي.')) {
         restartCourse();
       }
     });
+  }
+
+  // ---------- Review Mode ----------
+  // When a learner has completed the course (or individual scenes), they can
+  // revisit those scenes in Review Mode. In this mode:
+  //   - All scenes are unlocked (drawer items aren't greyed out)
+  //   - Assessment answers don't update sceneScores or SCORM score
+  //   - The topbar shows a "Review Mode" indicator
+  //   - A banner offers to exit back to Training Mode
+  // This lets learners use the course as a reference without corrupting
+  // their completion record.
+
+  function enterReviewMode() {
+    state.reviewMode = true;
+    document.body.classList.add('review-mode');
+  }
+
+  function exitReviewMode() {
+    state.reviewMode = false;
+    document.body.classList.remove('review-mode');
+    // If the completion screen was the last thing shown before review, return
+    // to it. Otherwise just clear the review banner and stay on the current scene.
+    if (state.completion) {
+      showCompletionScreen();
+    }
+  }
+
+  // ---------- Learning Hub ----------
+  // A knowledge center that lets learners (especially those who have completed
+  // the course) browse concepts, definitions, and revisit scenes. Replaces the
+  // narrow "Concept Index" idea with a reusable, extensible hub.
+  //
+  // The hub is a drawer (like the scene drawer) that contains:
+  //   1. A glossary of all governance terms (auto-extracted from scene content)
+  //   2. Quick navigation to any completed scene (in Review Mode)
+  //   3. Future: downloadable resources, external references
+  //
+  // The glossary is built by scanning CONTENT.screens for seats/layers/stars/
+  // pillars that have a `label` + `definition`. This means adding a new concept
+  // to content.js automatically makes it appear in the hub — no separate
+  // registry to maintain.
+
+  function buildGlossary() {
+    const entries = [];
+    CONTENT.screens.forEach((scene, idx) => {
+      const sceneTitle = scene.title || '';
+      // Seats (scene 2)
+      if (scene.seats) {
+        scene.seats.forEach(seat => {
+          if (seat.label && seat.definition) {
+            entries.push({
+              term: seat.label,
+              definition: seat.definition,
+              sceneIdx: idx,
+              sceneTitle: sceneTitle,
+              icon: seat.icon || '',
+            });
+          }
+        });
+      }
+      // Layers (scene 3)
+      if (scene.layers) {
+        scene.layers.forEach(layer => {
+          if (layer.label && layer.definition) {
+            entries.push({
+              term: layer.label,
+              definition: layer.definition,
+              sceneIdx: idx,
+              sceneTitle: sceneTitle,
+              icon: layer.icon || '',
+            });
+          }
+        });
+      }
+      // Stars (scene 6)
+      if (scene.stars) {
+        scene.stars.forEach(star => {
+          if (star.label && star.definition) {
+            entries.push({
+              term: star.label,
+              definition: star.definition,
+              sceneIdx: idx,
+              sceneTitle: sceneTitle,
+              icon: star.icon || '',
+            });
+          }
+        });
+      }
+    });
+    return entries;
+  }
+
+  function openLearningHub() {
+    const hub = document.getElementById('learning-hub');
+    const backdrop = document.getElementById('learning-hub-backdrop');
+    if (!hub) return;
+
+    // Build hub content
+    const glossary = buildGlossary();
+    const totalScenes = CONTENT.screens.length;
+    const completedScenes = Object.keys(state.sceneScores || {}).length;
+    const canReview = state.completion || completedScenes > 0;
+
+    // Glossary entries (searchable list)
+    const glossaryHtml = glossary.map((entry, i) => `
+      <button class="hub-glossary-item" data-glossary-idx="${i}" type="button">
+        <div class="hub-glossary-icon">${escapeHtml(entry.icon)}</div>
+        <div class="hub-glossary-content">
+          <div class="hub-glossary-term">${escapeHtml(entry.term)}</div>
+          <div class="hub-glossary-def">${escapeHtml(entry.definition)}</div>
+          <div class="hub-glossary-scene">${escapeHtml(entry.sceneTitle)}</div>
+        </div>
+      </button>
+    `).join('');
+
+    // Scene navigation (only completed scenes are reviewable)
+    const scenesHtml = CONTENT.screens.map((scene, idx) => {
+      const isCompleted = isSceneCompleted(idx);
+      const canReviewThis = canReview && (isCompleted || idx === 0);
+      return `
+        <button class="hub-scene-item ${canReviewThis ? '' : 'locked'}" data-hub-scene-idx="${idx}" type="button" ${canReviewThis ? '' : 'disabled'}>
+          <div class="hub-scene-num">${arabicNumeral(idx + 1)}</div>
+          <div class="hub-scene-info">
+            <div class="hub-scene-title">${escapeHtml(scene.title)}</div>
+            <div class="hub-scene-status">${isCompleted ? '✓ مكتمل' : (idx === 0 ? 'متاح' : 'مقفل')}</div>
+          </div>
+        </button>
+      `;
+    }).join('');
+
+    document.getElementById('learning-hub-body').innerHTML = `
+      <div class="hub-section">
+        <div class="hub-section-title">المفاهيم الأساسية</div>
+        <div class="hub-glossary-list">${glossaryHtml}</div>
+      </div>
+      <div class="hub-section">
+        <div class="hub-section-title">الانتقال السريع</div>
+        <div class="hub-scenes-list">${scenesHtml}</div>
+      </div>
+      ${!canReview ? '<div class="hub-hint">أكمل المشاهد أولاً لتفعيل وضع المراجعة</div>' : ''}
+    `;
+
+    // Wire glossary items — clicking shows a modal with full definition
+    document.querySelectorAll('.hub-glossary-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const i = parseInt(btn.dataset.glossaryIdx, 10);
+        const entry = glossary[i];
+        if (!entry) return;
+        const content = `
+          <div class="seat-modal-card" tabindex="-1">
+            <div class="seat-modal-num">${escapeHtml(entry.icon)}</div>
+            <div class="seat-modal-eyebrow">${escapeHtml(entry.sceneTitle)}</div>
+            <h3 class="seat-modal-title">${escapeHtml(entry.term)}</h3>
+            <div class="seat-modal-def-label">التعريف</div>
+            <div class="seat-modal-def">${escapeHtml(entry.definition)}</div>
+            <button class="seat-modal-close" type="button">فهمت</button>
+          </div>
+        `;
+        ModalManager.open({ content, label: entry.term });
+        const closeBtn = ModalManager.current.overlay.querySelector('.seat-modal-close');
+        if (closeBtn) closeBtn.addEventListener('click', () => ModalManager.close());
+      });
+    });
+
+    // Wire scene items — clicking enters review mode and jumps to the scene
+    document.querySelectorAll('.hub-scene-item').forEach(btn => {
+      if (btn.disabled) return;
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.hubSceneIdx, 10);
+        if (!canReview) return;
+        // Enter review mode, close hub, jump to scene
+        enterReviewMode();
+        closeLearningHub();
+        if (window.TTS) TTS.cancel();
+        Narrator.skipRequested = true;
+        state.currentScreen = idx;
+        // In review mode we DON'T reset scene state — the learner keeps their
+        // progress. We just re-render the scene so it plays fresh visually.
+        renderScene(idx);
+        showToast('وضع المراجعة — لن تؤثر تصرفاتك على درجتك', 'success');
+      });
+    });
+
+    hub.classList.add('visible');
+    backdrop.classList.add('visible');
+    hub.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeLearningHub() {
+    const hub = document.getElementById('learning-hub');
+    const backdrop = document.getElementById('learning-hub-backdrop');
+    if (hub) { hub.classList.remove('visible'); hub.setAttribute('aria-hidden', 'true'); }
+    if (backdrop) backdrop.classList.remove('visible');
+  }
+
+  function bindLearningHub() {
+    const btn = document.getElementById('hub-toggle');
+    const closeBtn = document.getElementById('learning-hub-close');
+    const backdrop = document.getElementById('learning-hub-backdrop');
+    if (btn) btn.addEventListener('click', openLearningHub);
+    if (closeBtn) closeBtn.addEventListener('click', closeLearningHub);
+    if (backdrop) backdrop.addEventListener('click', closeLearningHub);
+    // Review mode exit button (in the banner)
+    const reviewExit = document.getElementById('review-exit-btn');
+    if (reviewExit) reviewExit.addEventListener('click', exitReviewMode);
   }
 
   // ---------- Boot ----------
