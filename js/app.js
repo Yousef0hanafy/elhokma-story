@@ -84,6 +84,9 @@
 
     window.ScormApi.init();
     loadState();
+    // Initialize the scoring module with the app's sceneScores ref so
+    // scores persist via the existing suspend_data mechanism.
+    if (window.Scoring) Scoring.init(state.sceneScores, CONTENT.screens.length);
     Narrator.init();
     Animator.init();
     if (window.TTS) TTS.init();
@@ -303,9 +306,11 @@
     state.sceneState = {};
     if (window.TTS) TTS.cancel();
     Narrator.skipRequested = true;
+    // Re-init Scoring with the fresh (empty) scores object.
+    if (window.Scoring) Scoring.init(state.sceneScores, CONTENT.screens.length);
     saveState();
     window.ScormApi.setStatus('incomplete');
-    window.ScormApi.setScore(0, 0, 100);
+    Scoring.commit();
     closeSceneDrawer();
     renderScene(0);
     showToast('بدأت الرحلة من جديد', 'success');
@@ -613,6 +618,25 @@
     $narratorAvatar().innerHTML = svg;
   }
 
+  // ---------- Scene Registry ----------
+  // Maps scene.id → render function. This replaces the if/else dispatch
+  // chain that previously lived inside renderScene(). Adding a new scene
+  // is now a single-line addition here + defining the render function —
+  // no need to touch the dispatch logic itself.
+  //
+  // The registry is declared with `var` so it hoists above renderScene()
+  // (which is called at boot). The function references (renderOpening, etc.)
+  // are also hoisted because they are function declarations.
+  var SCENE_RENDERERS = {
+    opening: renderOpening,
+    boardroom: renderBoardroom,
+    framework: renderFramework,
+    pillars: renderPillars,
+    court: renderCourt,
+    integrity: renderIntegrity,
+    dilemma: renderDilemma,
+  };
+
   // ---------- Scene renderer (dispatch) ----------
   function renderScene(idx) {
     const scene = CONTENT.screens[idx];
@@ -643,15 +667,12 @@
 
       // Render scene-specific content (guarded so a throw in any renderer
       // shows the recovery UI instead of leaving the stage blank).
+      // The registry maps scene.id → render function. Adding a new scene
+      // = add one entry here + define the render function. No need to edit
+      // an if/else chain.
       const dispatch = () => {
-        if (scene.id === 'opening') renderOpening(scene);
-        else if (scene.id === 'boardroom') renderBoardroom(scene);
-        else if (scene.id === 'framework') renderFramework(scene);
-        else if (scene.id === 'pillars') renderPillars(scene);
-        else if (scene.id === 'court') renderCourt(scene);
-        else if (scene.id === 'integrity') renderIntegrity(scene);
-        else if (scene.id === 'dilemma') renderDilemma(scene);
-        else renderComingSoon(scene);
+        const renderer = SCENE_RENDERERS[scene.id] || renderComingSoon;
+        renderer(scene);
       };
       if (window.ErrorBoundary) ErrorBoundary.guard('renderScene:' + scene.id, dispatch);
       else dispatch();
@@ -1044,62 +1065,12 @@
     const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
-    // SCORM: progressive scoring — each correct assessment adds (100 / total_assessments)
-    if (!state.sceneScores) state.sceneScores = {};
-    state.sceneScores[state.currentScreen] = correct ? 1 : 0;
-    const scorePerScene = Math.round(100 / CONTENT.screens.length);
-    const correctScenes = Object.values(state.sceneScores).filter(v => v === 1).length;
-    const totalScore = Math.min(100, correctScenes * scorePerScene);
-    window.ScormApi.setScore(totalScore, 0, 100);
-
+    // Record score via the centralized Scoring module.
+    Scoring.recordAndCommit(state.currentScreen, correct);
     saveState();
 
-    // After delay, show CTA for next scene
-    setTimeout(() => {
-      const ctaZone = $ctaZone();
-      ctaZone.classList.remove('empty');
-      const isLastScene = state.currentScreen >= CONTENT.screens.length - 1;
-      ctaZone.innerHTML = `
-        <button class="cta-primary" id="cta-next" type="button">
-          <span>${correct ? (isLastScene ? 'أكملت الرحلة ✓' : 'التالي') : 'حاول مرة أخرى'}</span>
-          <span class="cta-arrow">←</span>
-        </button>
-        <div class="cta-hint">${correct ? (isLastScene ? 'تهانينا على إتمام الرحلة' : 'انتقل إلى المشهد التالي') : 'راجع الإجابة الصحيحة ثم تابع'}</div>
-      `;
-      setTimeout(() => {
-        const btn = document.getElementById('cta-next');
-        btn.classList.add('visible');
-        const h = ctaZone.querySelector('.cta-hint');
-        if (h) h.classList.add('visible');
-        btn.addEventListener('click', () => {
-          if (correct) {
-            if (isLastScene) {
-              showToast('تهانينا! أكملت الرحلة كاملة', 'success');
-              window.ScormApi.setStatus('completed');
-              window.ScormApi.setStatus('passed');
-            } else {
-              // Advance to next scene
-              state.currentScreen++;
-              saveState();
-              renderScene(state.currentScreen);
-            }
-          } else {
-            // Reset assessment IN PLACE (no full re-render) for robust recovery
-            // Boardroom uses state.assessmentAnswer/assessmentAnswered (legacy),
-            // so we reset those plus call the generic in-place reset.
-            state.assessmentAnswer = null;
-            state.assessmentAnswered = false;
-            // Also ensure sceneState exists for boardroom so resetAssessmentInPlace works
-            if (!state.sceneState[state.currentScreen]) {
-              state.sceneState[state.currentScreen] = { explored: state.exploredSeats.slice(), answered: false, answer: null, narrationCompleted: true };
-            }
-            state.sceneState[state.currentScreen].answered = false;
-            state.sceneState[state.currentScreen].answer = null;
-            resetAssessmentInPlace(scene);
-          }
-        });
-      }, 100);
-    }, 2000);
+    // After delay, show the shared advance/retry CTA.
+    setTimeout(() => showAdvanceOrRetryCTA(scene, correct), 2000);
   }
 
   function showAssessmentAnswer(scene) {
@@ -2077,22 +2048,11 @@
           // Show reflection
           document.getElementById('dl-reflection').classList.add('show');
           showDilemmaFinalCTA(scene);
-          // Update SCORM — this is the final scene
+          // Record dilemma score with partial credit via the Scoring module.
           const correctPhases = Object.values(ss.phaseCorrect).filter(v => v).length;
           const totalPhases = scene.phases.length;
-          // Score for this scene = (correctPhases / totalPhases) * (100/7)
-          const sceneScore = Math.round((correctPhases / totalPhases) * (100 / CONTENT.screens.length));
-          if (!state.sceneScores) state.sceneScores = {};
-          state.sceneScores[state.currentScreen] = correctPhases === totalPhases ? 1 : 0;
-          // Recompute total
-          const correctScenes = Object.values(state.sceneScores).filter(v => v === 1).length;
-          // For partial credit on dilemma, add the partial
-          let totalScore = correctScenes * Math.round(100 / CONTENT.screens.length);
-          if (state.sceneScores[state.currentScreen] === 0 && correctPhases > 0) {
-            totalScore += Math.round((correctPhases / totalPhases) * Math.round(100 / CONTENT.screens.length));
-          }
-          totalScore = Math.min(100, totalScore);
-          window.ScormApi.setScore(totalScore, 0, 100);
+          Scoring.recordDilemma(state.currentScreen, correctPhases, totalPhases);
+          Scoring.commit();
           if (correctPhases === totalPhases) {
             window.ScormApi.setStatus('completed');
             window.ScormApi.setStatus('passed');
@@ -2176,50 +2136,12 @@
     const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
-    // Update scene score
-    if (!state.sceneScores) state.sceneScores = {};
-    state.sceneScores[state.currentScreen] = correct ? 1 : 0;
-    const scorePerScene = Math.round(100 / CONTENT.screens.length);
-    const correctScenes = Object.values(state.sceneScores).filter(v => v === 1).length;
-    const totalScore = Math.min(100, correctScenes * scorePerScene);
-    window.ScormApi.setScore(totalScore, 0, 100);
+    // Record score via the centralized Scoring module.
+    Scoring.recordAndCommit(state.currentScreen, correct);
     saveState();
 
-    // Show next-scene CTA
-    setTimeout(() => {
-      const isLastScene = state.currentScreen >= CONTENT.screens.length - 1;
-      const ctaZone = $ctaZone();
-      ctaZone.classList.remove('empty');
-      ctaZone.innerHTML = `
-        <button class="cta-primary" id="cta-next" type="button">
-          <span>${correct ? (isLastScene ? 'أكملت الرحلة ✓' : 'التالي') : 'حاول مرة أخرى'}</span>
-          <span class="cta-arrow">←</span>
-        </button>
-        <div class="cta-hint">${correct ? (isLastScene ? 'تهانينا على إتمام الرحلة' : 'انتقل إلى المشهد التالي') : 'راجع الإجابة الصحيحة ثم تابع'}</div>
-      `;
-      setTimeout(() => {
-        const btn = document.getElementById('cta-next');
-        btn.classList.add('visible');
-        const h = ctaZone.querySelector('.cta-hint');
-        if (h) h.classList.add('visible');
-        btn.addEventListener('click', () => {
-          if (correct) {
-            if (isLastScene) {
-              showToast('تهانينا! أكملت الرحلة كاملة', 'success');
-              window.ScormApi.setStatus('completed');
-              window.ScormApi.setStatus('passed');
-            } else {
-              state.currentScreen++;
-              saveState();
-              renderScene(state.currentScreen);
-            }
-          } else {
-            // Reset assessment IN PLACE (no full re-render) for robust recovery
-            resetAssessmentInPlace(scene);
-          }
-        });
-      }, 100);
-    }, 2000);
+    // After delay, show the shared advance/retry CTA.
+    setTimeout(() => showAdvanceOrRetryCTA(scene, correct), 2000);
   }
 
   // ---------- In-place assessment reset (no re-render) ----------
@@ -2236,12 +2158,9 @@
     // Also reset legacy boardroom state
     state.assessmentAnswer = null;
     state.assessmentAnswered = false;
-    // Update score (this scene no longer correct)
-    if (state.sceneScores) state.sceneScores[state.currentScreen] = 0;
-    const scorePerScene = Math.round(100 / CONTENT.screens.length);
-    const correctScenes = Object.values(state.sceneScores).filter(v => v === 1).length;
-    const totalScore = Math.min(100, correctScenes * scorePerScene);
-    window.ScormApi.setScore(totalScore, 0, 100);
+    // Reset score for this scene and recompute total via Scoring module.
+    Scoring.recordScene(state.currentScreen, false);
+    Scoring.commit();
     saveState();
 
     // Reset UI: unlock options, remove correct/incorrect styling
@@ -2420,6 +2339,48 @@
     const panel = document.getElementById('assessment-panel');
     if (panel) panel.classList.add('visible');
     return correct;
+  }
+
+  // Shared "advance or retry" CTA shown after an assessment is answered.
+  // Both the boardroom and generic assessment handlers previously had their
+  // own copy of this ~25-line block. Centralizing it ensures the advance/
+  // retry behavior stays consistent and makes the assessment flow easier to
+  // reason about for future engineers.
+  //
+  // On correct: shows "التالي" (or "أكملت الرحلة" on last scene) → advances.
+  // On wrong:   shows "حاول مرة أخرى" → calls resetAssessmentInPlace.
+  function showAdvanceOrRetryCTA(scene, correct) {
+    const isLastScene = state.currentScreen >= CONTENT.screens.length - 1;
+    const ctaZone = $ctaZone();
+    ctaZone.classList.remove('empty');
+    ctaZone.innerHTML = `
+      <button class="cta-primary" id="cta-next" type="button">
+        <span>${correct ? (isLastScene ? 'أكملت الرحلة ✓' : 'التالي') : 'حاول مرة أخرى'}</span>
+        <span class="cta-arrow">←</span>
+      </button>
+      <div class="cta-hint">${correct ? (isLastScene ? 'تهانينا على إتمام الرحلة' : 'انتقل إلى المشهد التالي') : 'راجع الإجابة الصحيحة ثم تابع'}</div>
+    `;
+    setTimeout(() => {
+      const btn = document.getElementById('cta-next');
+      btn.classList.add('visible');
+      const h = ctaZone.querySelector('.cta-hint');
+      if (h) h.classList.add('visible');
+      btn.addEventListener('click', () => {
+        if (correct) {
+          if (isLastScene) {
+            showToast('تهانينا! أكملت الرحلة كاملة', 'success');
+            window.ScormApi.setStatus('completed');
+            window.ScormApi.setStatus('passed');
+          } else {
+            state.currentScreen++;
+            saveState();
+            renderScene(state.currentScreen);
+          }
+        } else {
+          resetAssessmentInPlace(scene);
+        }
+      });
+    }, 100);
   }
 
   // ---------- Boot ----------
