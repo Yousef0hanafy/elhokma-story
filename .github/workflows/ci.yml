@@ -98,8 +98,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Install Playwright
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
       - name: Serve & smoke test

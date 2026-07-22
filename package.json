@@ -1,0 +1,14 @@
+{
+  "name": "elhokma-governance",
+  "version": "1.0.0",
+  "description": "رحلة الحوكمة — Premium Arabic Story-Based E-Learning (SCORM 1.2)",
+  "private": true,
+  "scripts": {
+    "test": "./scripts/test.sh",
+    "build:scorm": "./scripts/build-scorm.sh",
+    "smoke:test": "node tests/smoke-test.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.40.0"
+  }
+}
