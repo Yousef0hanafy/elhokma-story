@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main, production-upgrade]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Static checks: JS syntax, JSON validity, HTML structure.
+  # No build step needed — this is a no-framework vanilla JS project.
+  lint:
+    name: Lint & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check JS syntax (all .js files)
+        run: |
+          set -e
+          for f in js/*.js sw.js; do
+            if [ -f "$f" ]; then
+              node --check "$f" && echo "✓ $f"
+            fi
+          done
+
+      - name: Validate JSON (manifest)
+        run: |
+          python3 -c "import json; json.load(open('manifest.webmanifest')); print('✓ manifest.webmanifest')"
+
+      - name: Validate HTML structure
+        run: |
+          python3 -c "
+          import html.parser, sys
+          class P(html.parser.HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.errors = []
+              def error(self, msg):
+                  self.errors.append(msg)
+          with open('index.html', encoding='utf-8') as f:
+              p = P()
+              p.feed(f.read())
+          if p.errors:
+              print('HTML errors:', p.errors)
+              sys.exit(1)
+          print('✓ index.html parses')
+          "
+
+      - name: Check for forbidden patterns
+        run: |
+          set -e
+          # No eval, no Function constructor, no document.write
+          if grep -rE '(eval\s*\(|new\s+Function\s*\(|document\.write\s*\()' js/ --include='*.js'; then
+            echo "❌ Found forbidden pattern (eval/Function/document.write)"
+            exit 1
+          fi
+          # No inline event handlers in HTML (except the font onload pattern)
+          if grep -E 'on(click|load|error)="' index.html | grep -v 'onload="this.onload=null;this.rel' ; then
+            echo "❌ Found inline event handler in HTML"
+            exit 1
+          fi
+          echo "✓ No forbidden patterns"
+
+      - name: Check all referenced files exist
+        run: |
+          set -e
+          python3 -c "
+          import re, os, sys
+          with open('index.html', encoding='utf-8') as f:
+              html = f.read()
+          refs = re.findall(r'(?:src|href)=\"([^\"]+)\"', html)
+          # Skip external URLs, data URIs, and fragment-only links (#...)
+          local = [r for r in refs if not r.startswith(('http', '//', 'data:', 'mailto:', '#'))]
+          missing = [r for r in local if not os.path.exists(r)]
+          if missing:
+              print('❌ Missing referenced files:', missing)
+              sys.exit(1)
+          print(f'✓ All {len(local)} local references exist')
+          "
+
+  # Smoke test: serve the site and verify it loads without JS errors.
+  smoke:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Serve & smoke test
+        run: |
+          python3 -m http.server 8765 &
+          SERVER_PID=$!
+          sleep 2
+
+          node -e "
+          const { chromium } = require('playwright');
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            const errors = [];
+            page.on('pageerror', e => errors.push(e.message));
+            page.on('console', msg => {
+              if (msg.type() === 'error') errors.push('CONSOLE: ' + msg.text());
+            });
+            await page.goto('http://localhost:8765/', { waitUntil: 'networkidle' });
+            await page.waitForTimeout(3000);
+
+            // Verify the app initialized
+            const title = await page.title();
+            if (!title.includes('رحلة الحوكمة')) {
+              errors.push('Title mismatch: ' + title);
+            }
+
+            // Verify stage has content
+            const stageContent = await page.evaluate(() => document.getElementById('stage').innerHTML.length);
+            if (stageContent < 100) {
+              errors.push('Stage appears empty (length=' + stageContent + ')');
+            }
+
+            // Verify no error boundary UI
+            const hasError = await page.evaluate(() => document.querySelector('[role=alert]') !== null);
+            if (hasError) {
+              errors.push('Error boundary UI is visible');
+            }
+
+            await browser.close();
+
+            if (errors.length) {
+              console.error('❌ Smoke test failed:', errors);
+              process.exit(1);
+            }
+            console.log('✓ Smoke test passed — app loads without errors');
+          })();
+          "
+
+          kill $SERVER_PID 2>/dev/null || true

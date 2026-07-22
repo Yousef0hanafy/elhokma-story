@@ -4,16 +4,65 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="رحلة الحوكمة">
   <meta name="theme-color" content="#0B1F33">
-  <title>رحلة الحوكمة — الفصل الأول</title>
+  <meta name="color-scheme" content="dark">
+
+  <!-- SEO -->
+  <title>رحلة الحوكمة — الفصل الأول | تعلّم سينمائي تفاعلي</title>
+  <meta name="description" content="تجربة تعلّم سينمائية تفاعلية بالعربية الفصحى عن الحوكمة في القطاع الصحي. سبعة مشاهد سردية مع سرد صوتي عربي، تقييمات تقدّمية، وتوافق SCORM 1.2.">
+  <meta name="keywords" content="الحوكمة, القطاع الصحي, التعليم الإلكتروني, SCORM, العربية, مجلس الإدارة, الامتثال">
+  <meta name="author" content="Yousef Hanafy">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://yousef0hanafy.github.io/elhokma-story/">
+
+  <!-- Open Graph / social -->
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="ar_AR">
+  <meta property="og:title" content="رحلة الحوكمة — تعلّم سينمائي تفاعلي">
+  <meta property="og:description" content="تجربة تعلّم سينمائية تفاعلية بالعربية الفصحى عن الحوكمة في القطاع الصحي. سبعة مشاهد سردية مع سرد صوتي عربي وتوافق SCORM 1.2.">
+  <meta property="og:image" content="preview/01_scene1_cover.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="رحلة الحوكمة — تعلّم سينمائي تفاعلي">
+  <meta name="twitter:description" content="تجربة تعلّم سينمائية تفاعلية بالعربية الفصحى عن الحوكمة في القطاع الصحي.">
+
+  <!-- Favicon (SVG scales to all sizes; no PNG bloat) -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="apple-touch-icon" href="favicon.svg">
+
+  <!-- Web app manifest (PWA installability + offline via service worker) -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="application-name" content="رحلة الحوكمة">
+
+  <!-- Fonts: non-blocking preload + async load.
+       preconnect warms the TLS handshake; the stylesheet loads without
+       blocking first paint, and we have system-font fallbacks in CSS
+       so the page is usable immediately. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap"></noscript>
+
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/animations.css">
   <link rel="stylesheet" href="css/scenes.css">
+
+  <!-- Register service worker for offline use (LMS environments often have flaky connectivity) -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function (e) {
+          console.info('[SW] registration failed (expected in SCORM sandbox):', e);
+        });
+      });
+    }
+  </script>
 </head>
 <body>
+
+  <!-- Skip link: first focusable element, enables keyboard users to bypass decorative UI -->
+  <a href="#stage" class="skip-link" data-skip-link>تخطّي إلى المحتوى</a>
 
   <!-- ===== LOADING SCREEN ===== -->
   <div id="loader" class="loader" aria-hidden="true">
@@ -137,11 +186,13 @@
   <!-- ===== TOAST ===== -->
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="js/error-boundary.js"></script>
   <script src="js/scorm-api.js"></script>
   <script src="js/tts.js"></script>
   <script src="js/content.js"></script>
   <script src="js/narrator.js"></script>
   <script src="js/animator.js"></script>
+  <script src="js/modal-manager.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

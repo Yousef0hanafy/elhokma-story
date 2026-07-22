@@ -1,17 +1,37 @@
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Editor
+# Editor / IDE
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
+.project
+.settings/
 
 # Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Local env
 node_modules/
+.env
+.env.local
+.env.*.local
 
-# Keep preview images (portfolio reference)
-# preview/
+# Build output (if a build step is added later)
+dist/
+build/
+.cache/
+
+# Local SCORM test packages
+*.zip
+!preview/*.png
+
+# Local storage dumps (debugging)
+localStorage-dump.json

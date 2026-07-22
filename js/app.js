@@ -34,6 +34,9 @@
 
   // ---------- Init ----------
   function init() {
+    // Install global error handlers first — before anything can throw.
+    if (window.ErrorBoundary) ErrorBoundary.install();
+
     // Detect dev mode (?dev=1 in URL)
     const urlParams = new URLSearchParams(window.location.search);
     const isDev = urlParams.get('dev') === '1' || urlParams.get('dev') === 'true';
@@ -78,7 +81,44 @@
       if (data.sceneScores) state.sceneScores = data.sceneScores;
       // Per-scene exploration/answer state for scenes 3-7
       if (data.sceneState) state.sceneState = data.sceneState;
+      // Clamp currentScreen to valid range — corrupt state must never
+      // dispatch to a non-existent scene.
+      const maxIdx = (CONTENT.screens || []).length - 1;
+      if (typeof state.currentScreen !== 'number' || state.currentScreen < 0 || state.currentScreen > maxIdx) {
+        state.currentScreen = 0;
+      }
+      // Normalize per-scene state so renderers can assume a safe shape.
+      normalizeSceneState();
     } catch (e) { console.warn('loadState failed', e); }
+  }
+
+  // Ensure each scene's persisted state has the fields its renderer expects.
+  // Without this, a corrupt or schema-mismatched suspend_data can crash a
+  // renderer (e.g. dilemma expects phaseAnswers; an older save may not have it).
+  function normalizeSceneState() {
+    if (!state.sceneState || typeof state.sceneState !== 'object') state.sceneState = {};
+    CONTENT.screens.forEach((scene, idx) => {
+      const ss = state.sceneState[idx];
+      if (!ss || typeof ss !== 'object') {
+        state.sceneState[idx] = {};
+        return;
+      }
+      if (scene.id === 'dilemma') {
+        if (!ss.phaseAnswers || typeof ss.phaseAnswers !== 'object') ss.phaseAnswers = {};
+        if (!ss.phaseCorrect || typeof ss.phaseCorrect !== 'object') ss.phaseCorrect = {};
+        if (typeof ss.currentPhase !== 'number') ss.currentPhase = 1;
+        if (typeof ss.completed !== 'boolean') ss.completed = false;
+      } else if (scene.id === 'court') {
+        if (!ss.classifications || typeof ss.classifications !== 'object') ss.classifications = {};
+        if (typeof ss.currentCase !== 'number') ss.currentCase = 1;
+      } else {
+        // Generic exploration/answer shape (framework, pillars, integrity, boardroom)
+        if (!Array.isArray(ss.explored)) ss.explored = [];
+        if (typeof ss.answered !== 'boolean') ss.answered = false;
+        if (ss.answer === undefined) ss.answer = null;
+      }
+      if (typeof ss.narrationCompleted !== 'boolean') ss.narrationCompleted = false;
+    });
   }
 
   function saveState() {
@@ -561,15 +601,20 @@
       document.getElementById('subtitle-bar').classList.remove('visible', 'controls-visible');
       document.body.classList.remove('cinematic');
 
-      // Render scene-specific content
-      if (scene.id === 'opening') renderOpening(scene);
-      else if (scene.id === 'boardroom') renderBoardroom(scene);
-      else if (scene.id === 'framework') renderFramework(scene);
-      else if (scene.id === 'pillars') renderPillars(scene);
-      else if (scene.id === 'court') renderCourt(scene);
-      else if (scene.id === 'integrity') renderIntegrity(scene);
-      else if (scene.id === 'dilemma') renderDilemma(scene);
-      else renderComingSoon(scene);
+      // Render scene-specific content (guarded so a throw in any renderer
+      // shows the recovery UI instead of leaving the stage blank).
+      const dispatch = () => {
+        if (scene.id === 'opening') renderOpening(scene);
+        else if (scene.id === 'boardroom') renderBoardroom(scene);
+        else if (scene.id === 'framework') renderFramework(scene);
+        else if (scene.id === 'pillars') renderPillars(scene);
+        else if (scene.id === 'court') renderCourt(scene);
+        else if (scene.id === 'integrity') renderIntegrity(scene);
+        else if (scene.id === 'dilemma') renderDilemma(scene);
+        else renderComingSoon(scene);
+      };
+      if (window.ErrorBoundary) ErrorBoundary.guard('renderScene:' + scene.id, dispatch);
+      else dispatch();
 
       saveState();
     });
@@ -581,8 +626,8 @@
     stage.style.opacity = '1';
     stage.innerHTML = `
       <div class="scene-cover">
-        <div class="scene-eyebrow anim-fade-up" style="opacity:1">${scene.eyebrow || ''}</div>
-        <h1 class="scene-title anim-fade-up" style="opacity:1; animation-delay:0.2s">${scene.title || ''}</h1>
+        <div class="scene-eyebrow anim-fade-up" style="opacity:1">${escapeHtml(scene.eyebrow || '')}</div>
+        <h1 class="scene-title anim-fade-up" style="opacity:1; animation-delay:0.2s">${escapeHtml(scene.title || '')}</h1>
         <div class="scene-subtitle anim-fade-up" style="opacity:1; animation-delay:0.4s">
           المشهد ${arabicNumeral(scene.scene_number)} — قيد الإنتاج
         </div>
@@ -620,12 +665,12 @@
 
     stage.innerHTML = `
       <div class="scene-cover">
-        <div class="scene-eyebrow" id="eyebrow">${scene.eyebrow}</div>
+        <div class="scene-eyebrow" id="eyebrow">${escapeHtml(scene.eyebrow)}</div>
         <h1 class="scene-title" id="hero-title">
-          رحلة <span class="accent">${scene.hero_title_accent}</span>
+          رحلة <span class="accent">${escapeHtml(scene.hero_title_accent)}</span>
         </h1>
-        <div class="scene-subtitle" id="hero-subtitle">${scene.subtitle}</div>
-        <div class="scene-story" id="hero-story">${scene.story_hook}</div>
+        <div class="scene-subtitle" id="hero-subtitle">${escapeHtml(scene.subtitle)}</div>
+        <div class="scene-story" id="hero-story">${escapeHtml(scene.story_hook)}</div>
       </div>
     `;
 
@@ -649,7 +694,7 @@
         typeTitle(document.getElementById('hero-title'), 'رحلة ' + scene.hero_title_accent, 60, () => {
           // Highlight accent after typing completes
           const titleEl = document.getElementById('hero-title');
-          titleEl.innerHTML = `رحلة <span class="accent">${scene.hero_title_accent}</span>`;
+          titleEl.innerHTML = `رحلة <span class="accent">${escapeHtml(scene.hero_title_accent)}</span>`;
         });
       }});
       tl.push({ time: 3.0, fn: () => document.getElementById('hero-subtitle').classList.add('anim-fade-up') });
@@ -738,9 +783,9 @@
     stage.innerHTML = `
       <div class="scene-boardroom">
         <div class="boardroom-header" id="br-header">
-          <div class="boardroom-eyebrow">${scene.eyebrow}</div>
-          <h2 class="boardroom-title">${scene.hero_title}</h2>
-          <p class="boardroom-instruction" id="br-instruction">${scene.instruction}</p>
+          <div class="boardroom-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="boardroom-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="boardroom-instruction" id="br-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
 
         <div class="boardroom-stage" id="br-stage">
@@ -774,12 +819,12 @@
 
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -884,51 +929,45 @@
   }
 
   function openSeatModal(seat, scene) {
-    // Build modal
-    const modal = document.createElement('div');
-    modal.className = 'seat-modal';
-    modal.innerHTML = `
-      <div class="seat-modal-card">
+    // Build modal content via ModalManager for proper focus trap + a11y
+    const content = `
+      <div class="seat-modal-card" tabindex="-1">
         <div class="seat-modal-num">${arabicNumeral(seat.n)}</div>
         <div class="seat-modal-eyebrow">المقعد ${arabicNumeral(seat.n)} من ٦</div>
-        <h3 class="seat-modal-title">${seat.label}</h3>
-        <div class="seat-modal-story">${seat.story}</div>
+        <h3 class="seat-modal-title">${escapeHtml(seat.label)}</h3>
+        <div class="seat-modal-story">${escapeHtml(seat.story)}</div>
         <div class="seat-modal-def-label">التعريف الرسمي</div>
-        <div class="seat-modal-def">${seat.definition}</div>
+        <div class="seat-modal-def">${escapeHtml(seat.definition)}</div>
         <button class="seat-modal-close" type="button">فهمت</button>
       </div>
     `;
-    document.body.appendChild(modal);
-    requestAnimationFrame(() => modal.classList.add('visible'));
-
-    const close = () => {
-      modal.classList.remove('visible');
-      setTimeout(() => modal.remove(), 300);
-      // Mark seat as explored
-      if (!state.exploredSeats.includes(seat.n)) {
-        state.exploredSeats.push(seat.n);
-        const el = document.getElementById('seat-' + seat.n);
-        if (el) el.classList.add('completed');
-        saveState();
-        updateProgress(scene);
-        // If all 6 explored, reveal assessment
-        if (state.exploredSeats.length === 6 && !state.assessmentAnswered) {
-          setTimeout(() => {
-            const panel = document.getElementById('assessment-panel');
-            panel.classList.add('visible');
-            enableBoardroomAssessment(scene);
-            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            showToast('أحسنت! اختبر فهمك الآن', 'success');
-          }, 400);
+    ModalManager.open({
+      content,
+      label: `المقعد ${arabicNumeral(seat.n)}: ${seat.label}`,
+      onClose: () => {
+        // Mark seat as explored
+        if (!state.exploredSeats.includes(seat.n)) {
+          state.exploredSeats.push(seat.n);
+          const el = document.getElementById('seat-' + seat.n);
+          if (el) el.classList.add('completed');
+          saveState();
+          updateProgress(scene);
+          // If all 6 explored, reveal assessment
+          if (state.exploredSeats.length === 6 && !state.assessmentAnswered) {
+            setTimeout(() => {
+              const panel = document.getElementById('assessment-panel');
+              panel.classList.add('visible');
+              enableBoardroomAssessment(scene);
+              panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              showToast('أحسنت! اختبر فهمك الآن', 'success');
+            }, 400);
+          }
         }
-      }
-    };
-
-    modal.querySelector('.seat-modal-close').addEventListener('click', close);
-    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-    document.addEventListener('keydown', function escHandler(e) {
-      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
+      },
     });
+    // Wire close button inside the modal
+    const closeBtn = ModalManager.current.overlay.querySelector('.seat-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => ModalManager.close());
   }
 
   function updateProgress(scene) {
@@ -962,30 +1001,12 @@
   function handleBoardroomAssessmentAnswer(idx, scene) {
     state.assessmentAnswer = idx;
     state.assessmentAnswered = true;
-    const correct = idx === scene.assessment.correct_index;
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === idx && !correct) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
-    `;
+    const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
     // SCORM: progressive scoring — each correct assessment adds (100 / total_assessments)
-    // Scenes 1-6 each have one assessment; scene 7 (dilemma) has 4 phases counted separately.
-    // For scenes 1-6: each correct = 100/9 ≈ 11.11%. Scene 7 phases: 4 × 100/9 ≈ 11.11% each.
     if (!state.sceneScores) state.sceneScores = {};
     state.sceneScores[state.currentScreen] = correct ? 1 : 0;
-    const totalScoreableScenes = 7; // scenes 1..6 single + scene 7 (counted via dilemma phases later)
-    // Simple progressive: each scene's assessment = 100 / 7 ≈ 14.28%
     const scorePerScene = Math.round(100 / CONTENT.screens.length);
     const correctScenes = Object.values(state.sceneScores).filter(v => v === 1).length;
     const totalScore = Math.min(100, correctScenes * scorePerScene);
@@ -1042,22 +1063,7 @@
   }
 
   function showAssessmentAnswer(scene) {
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === state.assessmentAnswer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = state.assessmentAnswer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, state.assessmentAnswer);
   }
 
   // ============================================================
@@ -1087,9 +1093,9 @@
     stage.innerHTML = `
       <div class="scene-framework">
         <div class="framework-header" id="fw-header">
-          <div class="framework-eyebrow">${scene.eyebrow}</div>
-          <h2 class="framework-title">${scene.hero_title}</h2>
-          <p class="framework-instruction">${scene.instruction}</p>
+          <div class="framework-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="framework-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="framework-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
         <div class="framework-tower" id="fw-tower">${layersHtml}</div>
         <div class="framework-progress" id="fw-progress">
@@ -1101,12 +1107,12 @@
         </div>
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -1196,10 +1202,8 @@
   }
 
   function openLayerModal(layer, scene) {
-    const modal = document.createElement('div');
-    modal.className = 'seat-modal';
-    modal.innerHTML = `
-      <div class="seat-modal-card">
+    const content = `
+      <div class="seat-modal-card" tabindex="-1">
         <div class="seat-modal-num">${layer.icon}</div>
         <div class="seat-modal-eyebrow">الطبقة ${arabicNumeral(layer.n)} من ${arabicNumeral(scene.layers.length)}</div>
         <h3 class="seat-modal-title">${escapeHtml(layer.label)}</h3>
@@ -1209,35 +1213,30 @@
         <button class="seat-modal-close" type="button">فهمت</button>
       </div>
     `;
-    document.body.appendChild(modal);
-    requestAnimationFrame(() => modal.classList.add('visible'));
-
-    const close = () => {
-      modal.classList.remove('visible');
-      setTimeout(() => modal.remove(), 300);
-      const ss = state.sceneState[state.currentScreen];
-      if (!ss.explored.includes(layer.n)) {
-        ss.explored.push(layer.n);
-        const el = document.querySelector(`.framework-layer[data-layer="${layer.n}"]`);
-        if (el) el.classList.add('completed');
-        saveState();
-        updateFrameworkProgress(scene);
-        if (ss.explored.length === scene.layers.length && !ss.answered) {
-          setTimeout(() => {
-            document.getElementById('assessment-panel').classList.add('visible');
-            enableAssessment(scene, 'framework');
-            document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-            showToast('أحسنت! اختبر فهمك الآن', 'success');
-          }, 400);
+    ModalManager.open({
+      content,
+      label: `الطبقة ${arabicNumeral(layer.n)}: ${layer.label}`,
+      onClose: () => {
+        const ss = state.sceneState[state.currentScreen];
+        if (!ss.explored.includes(layer.n)) {
+          ss.explored.push(layer.n);
+          const el = document.querySelector(`.framework-layer[data-layer="${layer.n}"]`);
+          if (el) el.classList.add('completed');
+          saveState();
+          updateFrameworkProgress(scene);
+          if (ss.explored.length === scene.layers.length && !ss.answered) {
+            setTimeout(() => {
+              document.getElementById('assessment-panel').classList.add('visible');
+              enableAssessment(scene, 'framework');
+              document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+              showToast('أحسنت! اختبر فهمك الآن', 'success');
+            }, 400);
+          }
         }
-      }
-    };
-
-    modal.querySelector('.seat-modal-close').addEventListener('click', close);
-    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-    document.addEventListener('keydown', function escHandler(e) {
-      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
+      },
     });
+    const closeBtn = ModalManager.current.overlay.querySelector('.seat-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => ModalManager.close());
   }
 
   function updateFrameworkProgress(scene) {
@@ -1260,22 +1259,7 @@
 
   function showFrameworkAssessment(scene) {
     const ss = state.sceneState[state.currentScreen];
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = ss.answer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1294,26 +1278,26 @@
     stage.innerHTML = `
       <div class="scene-pillars">
         <div class="pillars-header" id="pl-header">
-          <div class="pillars-eyebrow">${scene.eyebrow}</div>
-          <h2 class="pillars-title">${scene.hero_title}</h2>
-          <p class="pillars-instruction">${scene.instruction}</p>
+          <div class="pillars-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="pillars-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="pillars-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
         <div class="pillars-stage" id="pl-stage">
           <div class="pillars-arch" id="pl-arch">الاستدامة</div>
           <div class="pillar gov" id="pillar-gov" data-pillar="gov" tabindex="0" role="button" aria-label="ركيزة الحوكمة">
             <div class="pillar-icon">ح</div>
-            <div class="pillar-label">${scene.pillars.gov.label}</div>
-            <div class="pillar-subtitle">${scene.pillars.gov.subtitle}</div>
-            <div class="pillar-question">${scene.pillars.gov.question}</div>
+            <div class="pillar-label">${escapeHtml(scene.pillars.gov.label)}</div>
+            <div class="pillar-subtitle">${escapeHtml(scene.pillars.gov.subtitle)}</div>
+            <div class="pillar-question">${escapeHtml(scene.pillars.gov.question)}</div>
             <div class="pillar-facets">
               ${scene.pillars.gov.facets.map(f => `<div class="pillar-facet">${escapeHtml(f)}</div>`).join('')}
             </div>
           </div>
           <div class="pillar comp" id="pillar-comp" data-pillar="comp" tabindex="0" role="button" aria-label="ركيزة الامتثال">
             <div class="pillar-icon">ا</div>
-            <div class="pillar-label">${scene.pillars.comp.label}</div>
-            <div class="pillar-subtitle">${scene.pillars.comp.subtitle}</div>
-            <div class="pillar-question">${scene.pillars.comp.question}</div>
+            <div class="pillar-label">${escapeHtml(scene.pillars.comp.label)}</div>
+            <div class="pillar-subtitle">${escapeHtml(scene.pillars.comp.subtitle)}</div>
+            <div class="pillar-question">${escapeHtml(scene.pillars.comp.question)}</div>
             <div class="pillar-facets">
               ${scene.pillars.comp.facets.map(f => `<div class="pillar-facet">${escapeHtml(f)}</div>`).join('')}
             </div>
@@ -1329,12 +1313,12 @@
         </div>
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -1471,22 +1455,7 @@
 
   function showPillarsAssessment(scene) {
     const ss = state.sceneState[state.currentScreen];
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = ss.answer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1511,8 +1480,8 @@
     stage.innerHTML = `
       <div class="scene-court">
         <div class="court-header" id="ct-header">
-          <div class="court-eyebrow">${scene.eyebrow}</div>
-          <h2 class="court-title">${scene.hero_title}</h2>
+          <div class="court-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="court-title">${escapeHtml(scene.hero_title)}</h2>
           <p class="court-scenario">${escapeHtml(scene.scenario)}</p>
         </div>
         <div class="court-progress" id="ct-progress">
@@ -1521,12 +1490,12 @@
         <div id="ct-case-container"></div>
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">القاعدة الذهبية</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -1663,22 +1632,7 @@
 
   function showCourtAssessment(scene) {
     const ss = state.sceneState[state.currentScreen];
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = ss.answer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1739,9 +1693,9 @@
     stage.innerHTML = `
       <div class="scene-integrity">
         <div class="integrity-header" id="in-header">
-          <div class="integrity-eyebrow">${scene.eyebrow}</div>
-          <h2 class="integrity-title">${scene.hero_title}</h2>
-          <p class="integrity-instruction">${scene.instruction}</p>
+          <div class="integrity-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="integrity-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="integrity-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
         <div class="integrity-stage" id="in-stage">
           <svg class="integrity-svg" viewBox="0 0 560 560" xmlns="http://www.w3.org/2000/svg">
@@ -1770,12 +1724,12 @@
         </div>
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -1853,8 +1807,6 @@
   }
 
   function openStarModal(star, scene) {
-    const modal = document.createElement('div');
-    modal.className = 'seat-modal';
     let frameworkHtml = '';
     if (star.hasFramework && star.framework) {
       frameworkHtml = `
@@ -1871,8 +1823,8 @@
         </div>
       `;
     }
-    modal.innerHTML = `
-      <div class="seat-modal-card">
+    const content = `
+      <div class="seat-modal-card" tabindex="-1">
         <div class="seat-modal-num">${star.icon}</div>
         <div class="seat-modal-eyebrow">${star.isCenter ? 'النجم المركزي' : 'النجم ' + arabicNumeral(star.n) + ' من ' + arabicNumeral(scene.stars.length)}</div>
         <h3 class="seat-modal-title">${escapeHtml(star.label)}</h3>
@@ -1883,35 +1835,30 @@
         <button class="seat-modal-close" type="button">فهمت</button>
       </div>
     `;
-    document.body.appendChild(modal);
-    requestAnimationFrame(() => modal.classList.add('visible'));
-
-    const close = () => {
-      modal.classList.remove('visible');
-      setTimeout(() => modal.remove(), 300);
-      const ss = state.sceneState[state.currentScreen];
-      if (!ss.explored.includes(star.n)) {
-        ss.explored.push(star.n);
-        const el = document.getElementById(`star-${star.n}`);
-        if (el) el.classList.add('completed');
-        saveState();
-        updateIntegrityProgress(scene);
-        if (ss.explored.length === scene.stars.length && !ss.answered) {
-          setTimeout(() => {
-            document.getElementById('assessment-panel').classList.add('visible');
-            enableAssessment(scene, 'integrity');
-            document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-            showToast('أحسنت! اختبر فهمك الآن', 'success');
-          }, 400);
+    ModalManager.open({
+      content,
+      label: `${star.isCenter ? 'النجم المركزي' : 'النجم ' + arabicNumeral(star.n)}: ${star.label}`,
+      onClose: () => {
+        const ss = state.sceneState[state.currentScreen];
+        if (!ss.explored.includes(star.n)) {
+          ss.explored.push(star.n);
+          const el = document.getElementById(`star-${star.n}`);
+          if (el) el.classList.add('completed');
+          saveState();
+          updateIntegrityProgress(scene);
+          if (ss.explored.length === scene.stars.length && !ss.answered) {
+            setTimeout(() => {
+              document.getElementById('assessment-panel').classList.add('visible');
+              enableAssessment(scene, 'integrity');
+              document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+              showToast('أحسنت! اختبر فهمك الآن', 'success');
+            }, 400);
+          }
         }
-      }
-    };
-
-    modal.querySelector('.seat-modal-close').addEventListener('click', close);
-    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-    document.addEventListener('keydown', function escHandler(e) {
-      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
+      },
     });
+    const closeBtn = ModalManager.current.overlay.querySelector('.seat-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => ModalManager.close());
   }
 
   function updateIntegrityProgress(scene) {
@@ -1934,22 +1881,7 @@
 
   function showIntegrityAssessment(scene) {
     const ss = state.sceneState[state.currentScreen];
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = ss.answer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1974,9 +1906,9 @@
     stage.innerHTML = `
       <div class="scene-dilemma">
         <div class="dilemma-header" id="dl-header">
-          <div class="dilemma-eyebrow">${scene.eyebrow}</div>
-          <h2 class="dilemma-title">${scene.hero_title}</h2>
-          <p class="dilemma-instruction">${scene.instruction}</p>
+          <div class="dilemma-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="dilemma-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="dilemma-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
         <div class="dilemma-progress" id="dl-progress">
           ${scene.phases.map(p => `<div class="dilemma-progress-dot" data-phase="${p.n}">${arabicNumeral(p.n)}</div>`).join('')}
@@ -2201,21 +2133,7 @@
     const ss = state.sceneState[state.currentScreen];
     ss.answer = idx;
     ss.answered = true;
-    const correct = idx === scene.assessment.correct_index;
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === idx && !correct) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
-    `;
+    const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
     // Update scene score
@@ -2405,6 +2323,63 @@
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  }
+
+  // ---------- Shared assessment helpers ----------
+  // The assessment panel HTML is identical across all assessment scenes.
+  // Previously it was inlined 5 times (boardroom, framework, pillars, court,
+  // integrity). Centralizing it here ensures consistent escaping and makes
+  // future changes (e.g. adding a hint) a one-line edit.
+
+  const OPTION_LETTERS = ['أ', 'ب', 'ج', 'د', 'هـ'];
+
+  function buildAssessmentPanel(scene, opts = {}) {
+    const eyebrow = opts.eyebrow || 'اختبار سريع';
+    const a = scene.assessment;
+    if (!a) return '';
+    return `
+      <div class="assessment-panel" id="assessment-panel">
+        <div class="assessment-eyebrow">${escapeHtml(eyebrow)}</div>
+        <div class="assessment-question">${escapeHtml(a.question)}</div>
+        <div class="assessment-options" id="assessment-options">
+          ${a.options.map((opt, i) => `
+            <button class="assessment-option" data-idx="${i}" type="button">
+              <span class="option-letter">${OPTION_LETTERS[i] || ''}</span>
+              <span class="option-text">${escapeHtml(opt)}</span>
+            </button>
+          `).join('')}
+        </div>
+        <div class="assessment-feedback" id="assessment-feedback"></div>
+      </div>
+    `;
+  }
+
+  // Unified "show the learner's answer + correct answer + feedback" renderer.
+  // Used by all assessment scenes. `answerIdx` is the learner's selected index
+  // (or null if not yet answered). Reads scene.assessment for correct_index
+  // and feedback strings.
+  function renderAssessmentResult(scene, answerIdx) {
+    if (answerIdx === null || answerIdx === undefined) return;
+    const correct = answerIdx === scene.assessment.correct_index;
+    const opts = document.querySelectorAll('#assessment-options .assessment-option');
+    opts.forEach((o, i) => {
+      o.classList.add('locked');
+      if (i === scene.assessment.correct_index) o.classList.add('correct');
+      if (i === answerIdx && !correct) o.classList.add('incorrect');
+    });
+    const fb = document.getElementById('assessment-feedback');
+    if (fb) {
+      fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
+      fb.innerHTML = `
+        <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
+          ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
+        </span>
+        ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
+      `;
+    }
+    const panel = document.getElementById('assessment-panel');
+    if (panel) panel.classList.add('visible');
+    return correct;
   }
 
   // ---------- Boot ----------
