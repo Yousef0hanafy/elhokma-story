@@ -117,4 +117,29 @@
   ErrorBoundary.fatal = fatal;
 
   global.ErrorBoundary = ErrorBoundary;
+
+  // Self-install: do NOT wait for app.js to call install(). If app.js or
+  // content.js fails to load (404, syntax error), app.js's init() never runs,
+  // so install() would never be called. By self-installing here, the global
+  // error handler is active even if downstream scripts fail.
+  install();
+
+  // Loader timeout: if the app hasn't hidden the loader within 15 seconds,
+  // something went wrong (script failed to load, init threw before hiding
+  // the loader, etc.). Show a recovery UI instead of leaving the user on an
+  // infinite "please wait" screen.
+  setTimeout(() => {
+    const loader = document.getElementById('loader');
+    if (loader && !loader.classList.contains('hidden')) {
+      // Only fatal if the stage is empty (app truly didn't initialize).
+      const stage = document.getElementById('stage');
+      const stageEmpty = !stage || stage.innerHTML.trim().length < 50;
+      if (stageEmpty) {
+        fatal('تعذّر تحميل التطبيق. قد تكون هناك مشكلة في الاتصال أو في ملفات البرنامج. حاول إعادة تحميل الصفحة.');
+      } else {
+        // Stage has content — just hide the loader (init may have partially run).
+        loader.classList.add('hidden');
+      }
+    }
+  }, 15000);
 })(window);
