@@ -1001,30 +1001,12 @@
   function handleBoardroomAssessmentAnswer(idx, scene) {
     state.assessmentAnswer = idx;
     state.assessmentAnswered = true;
-    const correct = idx === scene.assessment.correct_index;
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === idx && !correct) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
-    `;
+    const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
     // SCORM: progressive scoring — each correct assessment adds (100 / total_assessments)
-    // Scenes 1-6 each have one assessment; scene 7 (dilemma) has 4 phases counted separately.
-    // For scenes 1-6: each correct = 100/9 ≈ 11.11%. Scene 7 phases: 4 × 100/9 ≈ 11.11% each.
     if (!state.sceneScores) state.sceneScores = {};
     state.sceneScores[state.currentScreen] = correct ? 1 : 0;
-    const totalScoreableScenes = 7; // scenes 1..6 single + scene 7 (counted via dilemma phases later)
-    // Simple progressive: each scene's assessment = 100 / 7 ≈ 14.28%
     const scorePerScene = Math.round(100 / CONTENT.screens.length);
     const correctScenes = Object.values(state.sceneScores).filter(v => v === 1).length;
     const totalScore = Math.min(100, correctScenes * scorePerScene);
@@ -1081,22 +1063,7 @@
   }
 
   function showAssessmentAnswer(scene) {
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === state.assessmentAnswer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = state.assessmentAnswer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, state.assessmentAnswer);
   }
 
   // ============================================================
@@ -1292,22 +1259,7 @@
 
   function showFrameworkAssessment(scene) {
     const ss = state.sceneState[state.currentScreen];
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = ss.answer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1503,22 +1455,7 @@
 
   function showPillarsAssessment(scene) {
     const ss = state.sceneState[state.currentScreen];
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = ss.answer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1695,22 +1632,7 @@
 
   function showCourtAssessment(scene) {
     const ss = state.sceneState[state.currentScreen];
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = ss.answer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1959,22 +1881,7 @@
 
   function showIntegrityAssessment(scene) {
     const ss = state.sceneState[state.currentScreen];
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === ss.answer && i !== scene.assessment.correct_index) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    const correct = ss.answer === scene.assessment.correct_index;
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
-    `;
-    document.getElementById('assessment-panel').classList.add('visible');
+    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -2226,21 +2133,7 @@
     const ss = state.sceneState[state.currentScreen];
     ss.answer = idx;
     ss.answered = true;
-    const correct = idx === scene.assessment.correct_index;
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach((o, i) => {
-      o.classList.add('locked');
-      if (i === scene.assessment.correct_index) o.classList.add('correct');
-      if (i === idx && !correct) o.classList.add('incorrect');
-    });
-    const fb = document.getElementById('assessment-feedback');
-    fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
-    fb.innerHTML = `
-      <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
-        ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
-      </span>
-      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
-    `;
+    const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
     // Update scene score
@@ -2430,6 +2323,63 @@
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  }
+
+  // ---------- Shared assessment helpers ----------
+  // The assessment panel HTML is identical across all assessment scenes.
+  // Previously it was inlined 5 times (boardroom, framework, pillars, court,
+  // integrity). Centralizing it here ensures consistent escaping and makes
+  // future changes (e.g. adding a hint) a one-line edit.
+
+  const OPTION_LETTERS = ['أ', 'ب', 'ج', 'د', 'هـ'];
+
+  function buildAssessmentPanel(scene, opts = {}) {
+    const eyebrow = opts.eyebrow || 'اختبار سريع';
+    const a = scene.assessment;
+    if (!a) return '';
+    return `
+      <div class="assessment-panel" id="assessment-panel">
+        <div class="assessment-eyebrow">${escapeHtml(eyebrow)}</div>
+        <div class="assessment-question">${escapeHtml(a.question)}</div>
+        <div class="assessment-options" id="assessment-options">
+          ${a.options.map((opt, i) => `
+            <button class="assessment-option" data-idx="${i}" type="button">
+              <span class="option-letter">${OPTION_LETTERS[i] || ''}</span>
+              <span class="option-text">${escapeHtml(opt)}</span>
+            </button>
+          `).join('')}
+        </div>
+        <div class="assessment-feedback" id="assessment-feedback"></div>
+      </div>
+    `;
+  }
+
+  // Unified "show the learner's answer + correct answer + feedback" renderer.
+  // Used by all assessment scenes. `answerIdx` is the learner's selected index
+  // (or null if not yet answered). Reads scene.assessment for correct_index
+  // and feedback strings.
+  function renderAssessmentResult(scene, answerIdx) {
+    if (answerIdx === null || answerIdx === undefined) return;
+    const correct = answerIdx === scene.assessment.correct_index;
+    const opts = document.querySelectorAll('#assessment-options .assessment-option');
+    opts.forEach((o, i) => {
+      o.classList.add('locked');
+      if (i === scene.assessment.correct_index) o.classList.add('correct');
+      if (i === answerIdx && !correct) o.classList.add('incorrect');
+    });
+    const fb = document.getElementById('assessment-feedback');
+    if (fb) {
+      fb.className = 'assessment-feedback show ' + (correct ? 'correct' : 'incorrect');
+      fb.innerHTML = `
+        <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
+          ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
+        </span>
+        ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
+      `;
+    }
+    const panel = document.getElementById('assessment-panel');
+    if (panel) panel.classList.add('visible');
+    return correct;
   }
 
   // ---------- Boot ----------
