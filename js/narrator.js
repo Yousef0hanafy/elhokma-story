@@ -95,9 +95,12 @@
     if (!$sub) return;
     startSpeaking();
 
-    // Speak this segment via TTS (if enabled)
-    if (global.TTS && TTS.isEnabled()) {
-      TTS.speak(seg.text);
+    // Narrate this segment via NarrationManager (provider-agnostic).
+    // The segment index is passed as the segmentId so the AudioProvider
+    // can look up the correct audio file in the manifest.
+    // Subtitles ALWAYS render below regardless of whether audio plays.
+    if (global.NarrationManager) {
+      NarrationManager.speak(seg.text, idx);
     }
 
     if (Narrator.reducedMotion) {
@@ -145,8 +148,9 @@
     Narrator.isPlaying = false;
     Narrator.isComplete = true;
     clearAllTimeouts();
-    // Cancel any in-flight TTS
-    if (global.TTS) TTS.cancel();
+    // Cancel any in-flight narration (provider-agnostic)
+    if (global.NarrationManager) NarrationManager.cancel();
+    else if (global.TTS) TTS.cancel();
 
     // Show final segment immediately
     if (Narrator.segments.length > 0) {

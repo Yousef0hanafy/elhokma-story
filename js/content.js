@@ -35,6 +35,34 @@ window.STORY_CONTENT = {
     version_label: 'إصدار ١.٠.٠',
   },
 
+  // ---------- Audio Narration Manifest ----------
+  // Maps sceneId → segmentIndex → audio file URL.
+  //
+  // To add professional narration:
+  //   1. Record each narration segment as a separate MP3 file
+  //   2. Place files in /audio/<sceneId>/seg-<index>.mp3
+  //   3. Add entries to the manifest below
+  //
+  // When this manifest is empty (or a specific segment is missing),
+  // NarrationManager automatically falls back to browser TTS, then to
+  // subtitle-only mode. No code changes needed.
+  //
+  // Example (uncomment when audio assets exist):
+  // audio: {
+  //   narration: {
+  //     'opening': {
+  //       '0': 'audio/opening/seg-0.mp3',
+  //       '1': 'audio/opening/seg-1.mp3',
+  //       ...
+  //     },
+  //     'boardroom': { ... },
+  //     ...
+  //   }
+  // },
+  audio: {
+    narration: {},
+  },
+
   screens: [
     // ============================================================
     // SCREEN 1 — Cinematic Opening

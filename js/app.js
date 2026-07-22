@@ -97,6 +97,18 @@
     Narrator.init();
     Animator.init();
     if (window.TTS) TTS.init();
+
+    // Initialize the NarrationManager with providers in priority order:
+    //   1. AudioProvider (professional MP3 narration — if manifest has entries)
+    //   2. TTSProvider (browser Arabic TTS — if voice available)
+    //   3. Subtitle-only (implicit fallback — subtitles always render)
+    // Scene code never knows which provider is active.
+    if (window.NarrationManager) {
+      if (window.AudioProvider) NarrationManager.registerProvider(AudioProvider);
+      if (window.TTSProvider) NarrationManager.registerProvider(TTSProvider);
+      NarrationManager.init((CONTENT.audio && CONTENT.audio.narration) || {});
+    }
+
     buildNarratorAvatar();
     bindGlobalEvents();
     bindNavigation();
@@ -261,7 +273,7 @@
             return;
           }
         }
-        if (window.TTS) TTS.cancel();
+        if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
         Narrator.skipRequested = true;
         state.currentScreen = targetIdx;
         resetCurrentSceneState();
@@ -346,7 +358,7 @@
         const idx = parseInt(btn.dataset.sceneIdx, 10);
         closeSceneDrawer();
         // Cancel any in-flight narration/TTS before switching
-        if (window.TTS) TTS.cancel();
+        if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
         Narrator.skipRequested = true;
         state.currentScreen = idx;
         // Reset per-scene state for the new scene so it plays fresh
@@ -389,7 +401,7 @@
     state.currentScreen = 0;
     state.sceneScores = {};
     state.sceneState = {};
-    if (window.TTS) TTS.cancel();
+    if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
     Narrator.skipRequested = true;
     // Re-init Scoring with the fresh (empty) scores object.
     if (window.Scoring) Scoring.init(state.sceneScores, CONTENT.screens.length);
@@ -401,7 +413,13 @@
     showToast('بدأت الرحلة من جديد', 'success');
   }
 
-  // ---------- TTS Controls ----------
+  // ---------- Narration Controls ----------
+  // These controls operate on NarrationManager (provider-agnostic). The UI
+  // (mute, speed, activation) works identically whether the active provider
+  // is professional audio, browser TTS, or subtitle-only. The activation
+  // overlay still checks TTS availability because that's what determines
+  // whether audio narration is possible at all (AudioProvider requires
+  // activation too, but we don't know if audio files exist until playback).
   function bindTTSControls() {
     const ttsToggle = document.getElementById('tts-toggle');
     const ttsRate = document.getElementById('tts-rate');
@@ -411,32 +429,40 @@
     // Activation overlay buttons
     const activateBtn = document.getElementById('tts-activate-btn');
     const skipBtn = document.getElementById('tts-skip-btn');
-    const activationOverlay = document.getElementById('tts-activation');
-    const activationStatus = document.getElementById('tts-activation-status');
-    const activationTitle = document.getElementById('tts-activation-title');
-    const activationDesc = document.getElementById('tts-activation-desc');
 
-    if (!window.TTS) return;
+    // Use NarrationManager for state if available, fall back to TTS for
+    // backward compatibility (e.g., if NM failed to load).
+    const NM = window.NarrationManager;
+    if (!NM && !window.TTS) return;
 
-    // Update topbar TTS button based on state
-    TTS.onStateChange(s => {
+    // Update topbar narration button based on state
+    const onStateChange = (s) => {
       if (!ttsToggle) return;
-      ttsToggle.disabled = !s.available;
-      ttsToggle.classList.toggle('muted', s.muted || !s.available || !s.activated);
+      // Determine availability: NM checks all providers, TTS checks itself
+      const available = NM ? !!s.available : s.available;
+      const activated = NM ? s.activated : s.activated;
+      const muted = NM ? s.muted : s.muted;
+      const speaking = NM ? s.speaking : s.speaking;
+      ttsToggle.disabled = !available;
+      ttsToggle.classList.toggle('muted', muted || !available || !activated);
       if (ttsIcon) {
-        if (!s.available) ttsIcon.textContent = '🔇';
-        else if (!s.activated) ttsIcon.textContent = '🔈';
-        else if (s.muted) ttsIcon.textContent = '🔈';
-        else if (s.speaking) ttsIcon.textContent = '🔊';
+        if (!available) ttsIcon.textContent = '🔇';
+        else if (!activated) ttsIcon.textContent = '🔈';
+        else if (muted) ttsIcon.textContent = '🔈';
+        else if (speaking) ttsIcon.textContent = '🔊';
         else ttsIcon.textContent = '🔊';
       }
-    });
+    };
 
-    // Topbar TTS toggle — if not activated, show activation overlay; else mute/unmute
+    if (NM) NM.onStateChange(onStateChange);
+    else TTS.onStateChange(onStateChange);
+
+    // Topbar narration toggle — if not activated, show activation overlay; else mute/unmute
     if (ttsToggle) {
       ttsToggle.addEventListener('click', () => {
-        const s = TTS.getState();
-        if (!s.available) {
+        const s = NM ? NM.getState() : TTS.getState();
+        const available = NM ? !!s.available : s.available;
+        if (!available) {
           showTTSActivationOverlay('unavailable');
           return;
         }
@@ -445,8 +471,9 @@
           return;
         }
         // Toggle mute
-        TTS.setMuted(!s.muted);
-        showToast(s.muted ? 'تم تفعيل السرد الصوتي' : 'تم كتم السرد الصوتي', s.muted ? 'success' : 'success');
+        if (NM) NM.setMuted(!s.muted);
+        else TTS.setMuted(!s.muted);
+        showToast(s.muted ? 'تم تفعيل السرد الصوتي' : 'تم كتم السرد الصوتي', 'success');
       });
     }
 
@@ -455,14 +482,16 @@
       const rates = [0.75, 1.0, 1.25, 1.5];
       const rateLabels = ['٠.٧٥×', '١×', '١.٢٥×', '١.٥×'];
       ttsRate.addEventListener('click', () => {
-        const s = TTS.getState();
-        if (!s.available) {
+        const s = NM ? NM.getState() : TTS.getState();
+        const available = NM ? !!s.available : s.available;
+        if (!available) {
           showToast('السرد الصوتي غير متاح', 'error');
           return;
         }
         const currentIdx = rates.indexOf(s.rate);
         const nextIdx = (currentIdx + 1) % rates.length;
-        TTS.setRate(rates[nextIdx]);
+        if (NM) NM.setRate(rates[nextIdx]);
+        else TTS.setRate(rates[nextIdx]);
         if (ttsRateLabel) ttsRateLabel.textContent = rateLabels[nextIdx];
         showToast(`سرعة السرد: ${rateLabels[nextIdx]}`, 'success');
       });
@@ -471,23 +500,19 @@
     // Activation overlay handlers
     if (activateBtn) {
       activateBtn.addEventListener('click', () => {
-        const s = TTS.getState();
-        if (!s.available) {
-          // No Arabic voice — proceed without TTS
+        const s = NM ? NM.getState() : TTS.getState();
+        const available = NM ? !!s.available : s.available;
+        if (!available) {
+          // No Arabic voice — proceed without audio (subtitles still work)
           hideTTSActivationOverlay();
           showToast('السرد الصوتي غير متاح، المتابعة بالترجمة النصية', 'warning');
           return;
         }
-        // Activate TTS (this is the user gesture)
-        TTS.activate();
+        // Activate narration (this is the user gesture)
+        if (NM) NM.activate();
+        else TTS.activate();
         hideTTSActivationOverlay();
         showToast('تم تفعيل السرد الصوتي', 'success');
-        // If we're on scene 1 and narration already started, re-trigger current segment
-        // The narrator.js will handle speaking via onSegment callback
-        // But if narration already passed, we may need to restart it
-        if (state.currentScreen === 0 && Narrator.isComplete) {
-          // Narration already done — no auto-replay, user can use ↺
-        }
       });
     }
 
@@ -509,11 +534,16 @@
 
     if (!overlay) return;
 
-    // Check TTS availability
-    const s = window.TTS ? TTS.getState() : { available: false };
+    // Check narration availability via NarrationManager (or TTS fallback)
+    const NM = window.NarrationManager;
+    const s = NM ? NM.getState() : (window.TTS ? TTS.getState() : { available: false });
+    // For the overlay, "available" means at least one audio provider can work.
+    // TTS availability is the proxy — AudioProvider only works after activation.
+    const ttsState = window.TTS ? TTS.getState() : { available: false };
+    const hasAudio = NM ? !!s.available : ttsState.available;
 
-    if (mode === 'unavailable' || !s.available) {
-      // No Arabic voice available
+    if (mode === 'unavailable' || !hasAudio) {
+      // No Arabic voice available — subtitles still work
       title.textContent = 'السرد الصوتي غير متاح';
       desc.textContent = 'متصفحك لا يدعم السرد الصوتي العربي. ستظهر الترجمة النصية تلقائياً. يمكنك المتابعة دون صوت.';
       if (activateBtn) activateBtn.style.display = 'none';
@@ -526,7 +556,7 @@
       desc.textContent = 'لتجربة كاملة مع صوت د. سارة، فعّل السرد الصوتي. يمكنك أيضاً المتابعة بالترجمة النصية فقط.';
       if (activateBtn) activateBtn.style.display = '';
       if (status) {
-        status.textContent = `الصوت المتاح: ${s.voiceName || 'عربي'} (${s.voiceLang || 'ar'})`;
+        status.textContent = `الصوت المتاح: ${ttsState.voiceName || 'عربي'} (${ttsState.voiceLang || 'ar'})`;
         status.className = 'tts-activation-status';
       }
     }
@@ -546,8 +576,9 @@
   let ttsActivationShown = false;
   function maybeShowTTSActivation() {
     if (ttsActivationShown) return;
-    if (!window.TTS) return;
-    const s = TTS.getState();
+    const NM = window.NarrationManager;
+    if (!NM && !window.TTS) return;
+    const s = NM ? NM.getState() : TTS.getState();
     if (s.activated) return; // Already activated
     // Show overlay after a short delay (let scene render first)
     setTimeout(() => {
@@ -728,8 +759,12 @@
     if (!scene) return;
     state.currentScreen = idx;
 
-    // Cancel any in-flight narration + TTS from previous scene
-    if (window.TTS) TTS.cancel();
+    // Cancel any in-flight narration from previous scene.
+    // Use NarrationManager (provider-agnostic) so audio/TTS both stop.
+    if (window.NarrationManager) NarrationManager.cancel();
+    else if (window.TTS) TTS.cancel();
+    // Tell NarrationManager which scene we're in (for audio manifest lookup)
+    if (window.NarrationManager) NarrationManager.setContext(scene.id);
     Narrator.skipRequested = true;
     Animator.clear();
 
@@ -2535,7 +2570,7 @@
     }
 
     // Cancel any in-flight narration
-    if (window.TTS) TTS.cancel();
+    if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
     Narrator.skipRequested = true;
     Narrator.hideNarrator();
     Animator.clear();
@@ -2821,7 +2856,7 @@
         // Enter review mode, close hub, jump to scene
         enterReviewMode();
         closeLearningHub();
-        if (window.TTS) TTS.cancel();
+        if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
         Narrator.skipRequested = true;
         state.currentScreen = idx;
         // In review mode we DON'T reset scene state — the learner keeps their
