@@ -81,7 +81,44 @@
       if (data.sceneScores) state.sceneScores = data.sceneScores;
       // Per-scene exploration/answer state for scenes 3-7
       if (data.sceneState) state.sceneState = data.sceneState;
+      // Clamp currentScreen to valid range — corrupt state must never
+      // dispatch to a non-existent scene.
+      const maxIdx = (CONTENT.screens || []).length - 1;
+      if (typeof state.currentScreen !== 'number' || state.currentScreen < 0 || state.currentScreen > maxIdx) {
+        state.currentScreen = 0;
+      }
+      // Normalize per-scene state so renderers can assume a safe shape.
+      normalizeSceneState();
     } catch (e) { console.warn('loadState failed', e); }
+  }
+
+  // Ensure each scene's persisted state has the fields its renderer expects.
+  // Without this, a corrupt or schema-mismatched suspend_data can crash a
+  // renderer (e.g. dilemma expects phaseAnswers; an older save may not have it).
+  function normalizeSceneState() {
+    if (!state.sceneState || typeof state.sceneState !== 'object') state.sceneState = {};
+    CONTENT.screens.forEach((scene, idx) => {
+      const ss = state.sceneState[idx];
+      if (!ss || typeof ss !== 'object') {
+        state.sceneState[idx] = {};
+        return;
+      }
+      if (scene.id === 'dilemma') {
+        if (!ss.phaseAnswers || typeof ss.phaseAnswers !== 'object') ss.phaseAnswers = {};
+        if (!ss.phaseCorrect || typeof ss.phaseCorrect !== 'object') ss.phaseCorrect = {};
+        if (typeof ss.currentPhase !== 'number') ss.currentPhase = 1;
+        if (typeof ss.completed !== 'boolean') ss.completed = false;
+      } else if (scene.id === 'court') {
+        if (!ss.classifications || typeof ss.classifications !== 'object') ss.classifications = {};
+        if (typeof ss.currentCase !== 'number') ss.currentCase = 1;
+      } else {
+        // Generic exploration/answer shape (framework, pillars, integrity, boardroom)
+        if (!Array.isArray(ss.explored)) ss.explored = [];
+        if (typeof ss.answered !== 'boolean') ss.answered = false;
+        if (ss.answer === undefined) ss.answer = null;
+      }
+      if (typeof ss.narrationCompleted !== 'boolean') ss.narrationCompleted = false;
+    });
   }
 
   function saveState() {
