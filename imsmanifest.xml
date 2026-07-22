@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+  SCORM 1.2 Manifest — رحلة الحوكمة (Governance Journey)
+
+  This file is REQUIRED for LMS import. An LMS will not recognize a
+  SCORM package without it. It declares:
+    - The course identifier and title
+    - The SCORM version (1.2)
+    - The launch file (index.html)
+    - The passing score threshold (70%)
+    - Time-based and completion-based tracking
+
+  To deploy: zip this file (at the root) together with index.html, css/,
+  js/, favicon.svg, sw.js, manifest.webmanifest, and preview/. The LMS
+  will unzip and launch index.html in an iframe, exposing the SCORM API.
+
+-->
+<manifest identifier="ELHOKMA_GOVERNANCE_CH1" version="1.0"
+          xmlns="http://www.imsproject.org/xsd/imscp_rootv1p1p2"
+          xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_rootv1p2"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://www.imsproject.org/xsd/imscp_rootv1p1p2 imscp_rootv1p1p2.xsd
+                              http://www.adlnet.org/xsd/adlcp_rootv1p2 adlcp_rootv1p2.xsd">
+
+  <metadata>
+    <schema>ADL SCORM</schema>
+    <schemaversion>1.2</schemaversion>
+  </metadata>
+
+  <organizations default="ELHOKMA-ORG">
+    <organization identifier="ELHOKMA-ORG">
+      <title>رحلة الحوكمة — الفصل الأول</title>
+      <item identifier="ITEM-1" identifierref="RES-1" isvisible="true">
+        <title>رحلة الحوكمة — الفصل الأول</title>
+        <adlcp:masteryscore>70</adlcp:masteryscore>
+        <adlcp:maxtimeallowed>02:00:00</adlcp:maxtimeallowed>
+        <adlcp:timelimitaction>exit,no message</adlcp:timelimitaction>
+        <adlcp:datafromlms>course=elhokma_governance_ch1</adlcp:datafromlms>
+      </item>
+    </organization>
+  </organizations>
+
+  <resources>
+    <resource identifier="RES-1" type="webcontent" adlcp:scormtype="sco" href="index.html">
+      <file href="index.html"/>
+      <file href="favicon.svg"/>
+      <file href="manifest.webmanifest"/>
+      <file href="sw.js"/>
+      <file href="css/style.css"/>
+      <file href="css/animations.css"/>
+      <file href="css/scenes.css"/>
+      <file href="js/error-boundary.js"/>
+      <file href="js/scorm-api.js"/>
+      <file href="js/scoring.js"/>
+      <file href="js/tts.js"/>
+      <file href="js/content.js"/>
+      <file href="js/narrator.js"/>
+      <file href="js/animator.js"/>
+      <file href="js/modal-manager.js"/>
+      <file href="js/app.js"/>
+    </resource>
+  </resources>
+
+</manifest>

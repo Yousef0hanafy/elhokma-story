@@ -225,6 +225,33 @@
         const sd = document.getElementById('scene-drawer');
         if (sd && sd.classList.contains('visible')) closeSceneDrawer();
       }
+      // Keyboard navigation: Alt+← (previous scene), Alt+→ (next scene).
+      // Only works if the target scene is unlocked. Doesn't interfere with
+      // text input or modal interactions. Useful for accessibility and
+      // power users who don't want to use the mouse for every transition.
+      if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        // Don't interfere if a modal is open or an input is focused
+        if (ModalManager.isOpen()) return;
+        if (document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+        e.preventDefault();
+        const direction = e.key === 'ArrowRight' ? 1 : -1;
+        const targetIdx = state.currentScreen + direction;
+        // Check if target scene exists and is unlocked
+        if (targetIdx < 0 || targetIdx >= CONTENT.screens.length) return;
+        if (targetIdx > state.currentScreen && !isSceneCompleted(targetIdx - 1) && targetIdx !== state.currentScreen + 1) {
+          // Can only advance to the next scene if current is completed
+          if (!isSceneCompleted(state.currentScreen)) {
+            showToast('أكمل المشهد الحالي أولاً', 'warning');
+            return;
+          }
+        }
+        if (window.TTS) TTS.cancel();
+        Narrator.skipRequested = true;
+        state.currentScreen = targetIdx;
+        resetCurrentSceneState();
+        saveState();
+        renderScene(targetIdx);
+      }
     });
   }
 
@@ -256,12 +283,31 @@
   function buildSceneDrawerContent() {
     const body = document.getElementById('scene-drawer-body');
     const total = CONTENT.screens.length;
-    let html = '';
+
+    // Build progress summary header — learners need to see their overall
+    // score and completion percentage. Previously the drawer only showed
+    // scene titles with no aggregate progress feedback.
+    const currentScore = Scoring.compute();
+    const completedCount = Object.keys(state.sceneScores || {}).length;
+    const progressPct = Math.round((completedCount / total) * 100);
+
+    let html = `
+      <div class="drawer-progress-summary">
+        <div class="drawer-progress-score">
+          <div class="drawer-progress-score-label">الدرجة الحالية</div>
+          <div class="drawer-progress-score-value">${arabicNumeral(currentScore)}<span class="drawer-progress-score-max">/١٠٠</span></div>
+        </div>
+        <div class="drawer-progress-bar-wrap">
+          <div class="drawer-progress-bar" style="width: ${progressPct}%"></div>
+        </div>
+        <div class="drawer-progress-text">${arabicNumeral(completedCount)} من ${arabicNumeral(total)} مشاهد مكتملة (${arabicNumeral(progressPct)}٪)</div>
+      </div>
+    `;
+
     CONTENT.screens.forEach((scene, idx) => {
       const isCurrent = idx === state.currentScreen;
       const isCompleted = isSceneCompleted(idx);
       const isUnlocked = idx <= state.currentScreen || isSceneCompleted(idx) || (idx > 0 && isSceneCompleted(idx - 1));
-      // Always allow jumping to scene 1; for others, require previous to be completed OR current
       const canJump = idx === 0 || isUnlocked || idx <= state.currentScreen;
       const classes = ['scene-item'];
       if (isCurrent) classes.push('current');
@@ -2085,21 +2131,15 @@
           saveState();
           // Show reflection
           document.getElementById('dl-reflection').classList.add('show');
-          showDilemmaFinalCTA(scene);
           // Record dilemma score with partial credit via the Scoring module.
           const correctPhases = Object.values(ss.phaseCorrect).filter(v => v).length;
           const totalPhases = scene.phases.length;
           Scoring.recordDilemma(state.currentScreen, correctPhases, totalPhases);
           Scoring.commit();
-          if (correctPhases === totalPhases) {
-            window.ScormApi.setStatus('completed');
-            window.ScormApi.setStatus('passed');
-            showToast(`تهانينا! أكملت الرحلة بنجاح (${arabicNumeral(correctPhases)}/${arabicNumeral(totalPhases)} قرارات صحيحة)`, 'success');
-          } else {
-            window.ScormApi.setStatus('completed');
-            showToast(`أكملت الرحلة بـ ${arabicNumeral(correctPhases)} من ${arabicNumeral(totalPhases)} قرارات صحيحة`, 'success');
-          }
           saveState();
+          // Show the completion screen (replaces the old toast-only flow).
+          // Short delay so the learner sees the reflection first.
+          setTimeout(() => showCompletionScreen(), 1500);
         });
       }
     }
@@ -2390,7 +2430,7 @@
     ctaZone.classList.remove('empty');
     ctaZone.innerHTML = `
       <button class="cta-primary" id="cta-next" type="button">
-        <span>${correct ? (isLastScene ? 'أكملت الرحلة ✓' : 'التالي') : 'حاول مرة أخرى'}</span>
+        <span>${correct ? (isLastScene ? 'عرض النتيجة' : 'التالي') : 'حاول مرة أخرى'}</span>
         <span class="cta-arrow">←</span>
       </button>
       <div class="cta-hint">${correct ? (isLastScene ? 'تهانينا على إتمام الرحلة' : 'انتقل إلى المشهد التالي') : 'راجع الإجابة الصحيحة ثم تابع'}</div>
@@ -2403,9 +2443,7 @@
       btn.addEventListener('click', () => {
         if (correct) {
           if (isLastScene) {
-            showToast('تهانينا! أكملت الرحلة كاملة', 'success');
-            window.ScormApi.setStatus('completed');
-            window.ScormApi.setStatus('passed');
+            showCompletionScreen();
           } else {
             state.currentScreen++;
             saveState();
@@ -2416,6 +2454,119 @@
         }
       });
     }, 100);
+  }
+
+  // ---------- Completion Screen ----------
+  // Shown when the learner finishes all 7 scenes. Displays final score,
+  // pass/fail status, completion date, and a print button for compliance
+  // records. Previously the learner only saw a 3-second toast — inadequate
+  // for compliance training where proof of completion is required.
+  function showCompletionScreen() {
+    const score = Scoring.compute();
+    const passingScore = CONTENT.course.passing_score || 70;
+    const passed = score >= passingScore;
+    const status = window.ScormApi.getStatus();
+
+    // Set final SCORM status
+    if (passed) {
+      window.ScormApi.setStatus('completed');
+      window.ScormApi.setStatus('passed');
+    } else {
+      window.ScormApi.setStatus('completed');
+    }
+
+    // Cancel any in-flight narration
+    if (window.TTS) TTS.cancel();
+    Narrator.skipRequested = true;
+    Narrator.hideNarrator();
+    Animator.clear();
+
+    // Hide subtitle bar and CTA zone
+    document.getElementById('subtitle-bar').classList.remove('visible', 'controls-visible');
+    const ctaZone = $ctaZone();
+    ctaZone.classList.add('empty');
+    ctaZone.innerHTML = '';
+
+    // Build completion screen
+    const stage = $stage();
+    stage.style.opacity = '1';
+    document.body.classList.remove('cinematic');
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('ar-SA-u-ca-gregory', {
+      year: 'numeric', month: 'long', day: 'numeric',
+    });
+
+    const studentName = window.ScormApi.getStudentName() || 'المتعلم';
+
+    stage.innerHTML = `
+      <div class="completion-screen" role="main" aria-live="polite">
+        <div class="completion-seal ${passed ? 'pass' : 'fail'}">
+          <svg viewBox="0 0 80 80" width="64" height="64">
+            <circle cx="40" cy="40" r="36" fill="none" stroke="${passed ? '#81C784' : '#E57373'}" stroke-width="3"/>
+            ${passed ? '<path d="M 24 40 L 35 51 L 56 28" stroke="#81C784" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' : '<path d="M 28 28 L 52 52 M 52 28 L 28 52" stroke="#E57373" stroke-width="4" stroke-linecap="round"/>'}
+          </svg>
+        </div>
+        <div class="completion-eyebrow">${passed ? 'تهانينا! لقد اجتزت الرحلة' : 'أكملت الرحلة'}</div>
+        <h1 class="completion-title">${escapeHtml(CONTENT.course.title)}</h1>
+        <div class="completion-subtitle">${escapeHtml(CONTENT.course.subtitle)}</div>
+
+        <div class="completion-score-card">
+          <div class="completion-score-label">نتيجتك النهائية</div>
+          <div class="completion-score-value ${passed ? 'pass' : 'fail'}">${arabicNumeral(score)}<span class="completion-score-max">/١٠٠</span></div>
+          <div class="completion-score-status ${passed ? 'pass' : 'fail'}">
+            ${passed ? '✓ اجتزت (' + arabicNumeral(passingScore) + ' مطلوب)' : '✗ لم تجتز (' + arabicNumeral(passingScore) + ' مطلوب)'}
+          </div>
+        </div>
+
+        <div class="completion-meta">
+          <div class="completion-meta-row">
+            <span class="completion-meta-label">المتعلم</span>
+            <span class="completion-meta-value">${escapeHtml(studentName)}</span>
+          </div>
+          <div class="completion-meta-row">
+            <span class="completion-meta-label">تاريخ الإتمام</span>
+            <span class="completion-meta-value">${escapeHtml(dateStr)}</span>
+          </div>
+          <div class="completion-meta-row">
+            <span class="completion-meta-label">المشاهد المكتملة</span>
+            <span class="completion-meta-value">${arabicNumeral(Object.keys(state.sceneScores || {}).length)} من ${arabicNumeral(CONTENT.screens.length)}</span>
+          </div>
+        </div>
+
+        <div class="completion-actions">
+          <button class="cta-primary visible" id="completion-print" type="button">
+            <span>طباعة الشهادة</span>
+            <span class="cta-arrow">←</span>
+          </button>
+          <button class="completion-secondary" id="completion-restart" type="button">
+            إعادة الرحلة
+          </button>
+        </div>
+
+        <div class="completion-print-only" aria-hidden="true">
+          <div class="print-certificate">
+            <div class="print-certificate-border">
+              <div class="print-certificate-title">شهادة إتمام</div>
+              <div class="print-certificate-course">${escapeHtml(CONTENT.course.title)}</div>
+              <div class="print-certificate-subtitle">${escapeHtml(CONTENT.course.subtitle)}</div>
+              <div class="print-certificate-name">${escapeHtml(studentName)}</div>
+              <div class="print-certificate-score">النتيجة: ${arabicNumeral(score)} / ١٠٠</div>
+              <div class="print-certificate-date">${escapeHtml(dateStr)}</div>
+              <div class="print-certificate-status">${passed ? 'اجتاز بنجاح' : 'أكمل البرنامج'}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Wire buttons
+    document.getElementById('completion-print').addEventListener('click', () => window.print());
+    document.getElementById('completion-restart').addEventListener('click', () => {
+      if (confirm('هل تريد إعادة الرحلة من البداية؟ سيتم مسح تقدّمك الحالي.')) {
+        restartCourse();
+      }
+    });
   }
 
   // ---------- Boot ----------
