@@ -83,14 +83,20 @@ elhokma-story/
 ├── js/
 │   ├── error-boundary.js   ← معالجة الأخطاء العامة + واجهة الاستعادة
 │   ├── scorm-api.js        ← غلاف SCORM 1.2 + localStorage fallback
+│   ├── scoring.js          ← حساب الدرجة النهائية (مصدر واحد للحقيقة)
+│   ├── version.js          ← تتبّع إصدار المحتوى + سجل الإتمام
 │   ├── tts.js              ← محرّك السرد الصوتي (Web Speech API)
+│   ├── audio-provider.js   ← مزوّد السرد الاحترافي (MP3)
+│   ├── tts-provider.js     ← مزوّد السرد عبر متصفح (TTS)
+│   ├── narration-manager.js← مدير السرد (اختيار المزوّد + fallback)
 │   ├── content.js          ← المحتوى + مواصفات الإنتاج الـ15 لكل مشهد
-│   ├── narrator.js         ← محرّك السرد (ترجمة + كاتب + مزامنة)
+│   ├── narrator.js         ← محرّك السرد (ترجمة + كاتب + مزامنة + إيقاف)
 │   ├── animator.js         ← منسّق الحركة
 │   ├── modal-manager.js    ← إدارة النوافذ المنبثقة (focus trap + a11y)
 │   └── app.js              ← التطبيق الرئيسي + ٧ دوال عرض
+├── tests/                  ← اختبارات وحدة (Scoring, Version, SCORM API)
 ├── .github/workflows/
-│   └── ci.yml              ← فحوصات CI (syntax + smoke test)
+│   └── ci.yml              ← فحوصات CI (unit tests + syntax + smoke test)
 ├── preview/                ← لقطات شاشة مرجعية
 ├── LICENSE                 ← رخصة MIT
 ├── CONTRIBUTING.md         ← إرشادات المساهمة
