@@ -71,20 +71,31 @@
 ## البنية التقنية
 
 ```
-lms_story/
-├── index.html              ← نقطة الدخول
+elhokma-story/
+├── index.html              ← نقطة الدخول (SEO + a11y + PWA)
+├── favicon.svg             ← أيقونة الموقع (SVG قابل للتكيف)
+├── manifest.webmanifest    ← بيان PWA للتثبيت كتطبيق
+├── sw.js                   ← Service Worker للاستخدام دون اتصال
 ├── css/
-│   ├── style.css           ← التصميم الأساسي + التنقل + TTS
+│   ├── style.css           ← التصميم الأساسي + التنقل + TTS + a11y
 │   ├── animations.css      ← مكتبة الحركات
 │   └── scenes.css          ← أنماط المشاهد ٣-٧
 ├── js/
+│   ├── error-boundary.js   ← معالجة الأخطاء العامة + واجهة الاستعادة
 │   ├── scorm-api.js        ← غلاف SCORM 1.2 + localStorage fallback
 │   ├── tts.js              ← محرّك السرد الصوتي (Web Speech API)
 │   ├── content.js          ← المحتوى + مواصفات الإنتاج الـ15 لكل مشهد
 │   ├── narrator.js         ← محرّك السرد (ترجمة + كاتب + مزامنة)
 │   ├── animator.js         ← منسّق الحركة
+│   ├── modal-manager.js    ← إدارة النوافذ المنبثقة (focus trap + a11y)
 │   └── app.js              ← التطبيق الرئيسي + ٧ دوال عرض
+├── .github/workflows/
+│   └── ci.yml              ← فحوصات CI (syntax + smoke test)
 ├── preview/                ← لقطات شاشة مرجعية
+├── LICENSE                 ← رخصة MIT
+├── CONTRIBUTING.md         ← إرشادات المساهمة
+├── SECURITY.md             ← سياسة الأمان
+├── CHANGELOG.md            ← سجل التغييرات
 └── README.md
 ```
 
@@ -93,7 +104,18 @@ lms_story/
 - **SVG inline** — الراوية، طاولة المجلس، خريطة النجوم
 - **Web Speech API** — السرد الصوتي العربي
 - **CSS Custom Properties** — لوحة ألوان موحّدة
-- **Google Fonts** — Tajawal + Cairo + Amiri
+- **Google Fonts** — Tajawal + Cairo + Amiri (تحميل غير حاجب)
+- **Service Worker** — دعم العمل دون اتصال (app shell caching)
+- **PWA Manifest** — قابل للتثبيت كتطبيق مستقل
+
+### الجاهزية للإنتاج
+- ✅ **الأمان:** هروب كامل للمحتوى الديناميكي (XSS defense-in-depth)
+- ✅ **الموثوقية:** Error boundary يلتقط الأخطاء ويعرض واجهة استعادة
+- ✅ **إمكانية الوصول:** skip link، focus trap في النوافذ، ARIA management
+- ✅ **SCORM:** debounced commits، mobile unload handling، try/catch على كل استدعاءات LMS
+- ✅ **SEO:** meta tags كاملة، Open Graph، canonical URL
+- ✅ **الأداء:** تحميل خطوط غير حاجب، service worker caching
+- ✅ **CI:** فحوصات تلقائية لكل pull request
 
 ---
 
