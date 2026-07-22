@@ -117,13 +117,37 @@
       if (!raw) return;
       const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (data.currentScreen !== undefined) state.currentScreen = data.currentScreen;
-      if (data.exploredSeats) state.exploredSeats = data.exploredSeats;
-      if (data.assessmentAnswer !== undefined) state.assessmentAnswer = data.assessmentAnswer;
-      if (data.assessmentAnswered) state.assessmentAnswered = data.assessmentAnswered;
-      if (data.narrationCompleted) state.narrationCompleted = data.narrationCompleted;
       if (data.sceneScores) state.sceneScores = data.sceneScores;
-      // Per-scene exploration/answer state for scenes 3-7
       if (data.sceneState) state.sceneState = data.sceneState;
+
+      // ---------- Boardroom legacy state migration ----------
+      // Scenes 3-7 always used state.sceneState[idx]. Scene 2 (boardroom)
+      // historically used top-level state.exploredSeats / assessmentAnswer /
+      // assessmentAnswered / narrationCompleted / seatsRevealed. We migrate
+      // those into state.sceneState[1] so ALL scenes use the same shape.
+      // The legacy fields are kept on `state` for saveState() backward compat
+      // (so older versions of the app can still read progress), but the
+      // renderers read exclusively from sceneState[1].
+      if (data.exploredSeats || data.assessmentAnswer !== undefined ||
+          data.assessmentAnswered || data.narrationCompleted) {
+        const ss1 = state.sceneState[1] || (state.sceneState[1] = {});
+        if (!Array.isArray(ss1.explored)) ss1.explored = [];
+        // Only migrate if sceneState[1].explored is empty (don't overwrite
+        // newer data with older legacy data).
+        if (ss1.explored.length === 0 && data.exploredSeats) {
+          ss1.explored = data.exploredSeats.slice();
+        }
+        if (ss1.answer === undefined && data.assessmentAnswer !== undefined) {
+          ss1.answer = data.assessmentAnswer;
+        }
+        if (ss1.answered === undefined && data.assessmentAnswered !== undefined) {
+          ss1.answered = !!data.assessmentAnswered;
+        }
+        if (ss1.narrationCompleted === undefined && data.narrationCompleted !== undefined) {
+          ss1.narrationCompleted = !!data.narrationCompleted;
+        }
+      }
+
       // Clamp currentScreen to valid range — corrupt state must never
       // dispatch to a non-existent scene.
       const maxIdx = (CONTENT.screens || []).length - 1;
@@ -165,12 +189,22 @@
   }
 
   function saveState() {
+    // Sync boardroom state back to legacy fields for backward compatibility
+    // (older versions of the app read state.exploredSeats etc. directly).
+    const ss1 = state.sceneState[1] || {};
+    state.exploredSeats = ss1.explored || [];
+    state.assessmentAnswer = ss1.answer !== undefined ? ss1.answer : null;
+    state.assessmentAnswered = !!ss1.answered;
+    state.narrationCompleted = !!ss1.narrationCompleted;
+
     window.ScormApi.setSuspendData({
       currentScreen: state.currentScreen,
+      // Legacy fields (kept for backward compat with older app versions)
       exploredSeats: state.exploredSeats,
       assessmentAnswer: state.assessmentAnswer,
       assessmentAnswered: state.assessmentAnswered,
       narrationCompleted: state.narrationCompleted,
+      // Current state model
       sceneScores: state.sceneScores || {},
       sceneState: state.sceneState || {},
     });
@@ -266,29 +300,23 @@
     if (!scene) return false;
     // Scene 1 (opening) is complete once user has moved past it
     if (scene.id === 'opening') return state.currentScreen > 0;
-    // For scenes 7 (dilemma) — check ss.completed
+    // Scene 7 (dilemma) has its own completed flag
     if (scene.id === 'dilemma') {
       const ss = state.sceneState && state.sceneState[idx];
       return ss && ss.completed;
     }
-    // For scenes with assessments (2, 3, 4, 5, 6), completion = answered correctly
+    // All other scenes (2-6): completion = answered correctly
     if (state.sceneScores && state.sceneScores[idx] === 1) return true;
     // Also accept "answered" (even if wrong) as "explored" for navigation unlock
     const ss = state.sceneState && state.sceneState[idx];
     if (ss && ss.answered) return true;
-    // Scene 2 uses the old per-scene state (state.assessmentAnswered) — handle that
-    if (scene.id === 'boardroom' && state.assessmentAnswered && idx === state.currentScreen) return true;
     return false;
   }
 
   function resetCurrentSceneState() {
-    // Clear the per-scene working state so re-entry plays fresh
-    state.assessmentAnswer = null;
-    state.assessmentAnswered = false;
-    state.narrationCompleted = false;
-    state.seatsRevealed = false;
-    // Don't clear exploredSeats for scene 2 here — handled by per-scene state
-    // Clear current scene's state in sceneState
+    // Clear the current scene's state so re-entry plays fresh.
+    // All scenes (including boardroom) now use sceneState[idx] — no legacy
+    // state variables to reset.
     if (state.sceneState) {
       delete state.sceneState[state.currentScreen];
     }
@@ -297,11 +325,6 @@
   function restartCourse() {
     if (!confirm('هل أنت متأكد من إعادة الرحلة من البداية؟ سيتم مسح تقدّمك.')) return;
     state.currentScreen = 0;
-    state.exploredSeats = [];
-    state.assessmentAnswer = null;
-    state.assessmentAnswered = false;
-    state.narrationCompleted = false;
-    state.seatsRevealed = false;
     state.sceneScores = {};
     state.sceneState = {};
     if (window.TTS) TTS.cancel();
@@ -768,7 +791,9 @@
       Narrator.start(scene.narration, {
         totalSeconds: scene.narration_total_seconds,
         onComplete: () => {
-          state.narrationCompleted = true;
+          // Note: the opening scene does not track narrationCompleted in
+          // sceneState because it always replays on reload (no skip path).
+          // We just persist currentScreen so a reload returns here.
           saveState();
           showCTA(scene.cta_label, scene.cta_hint, () => {
             // Move to next scene
@@ -826,6 +851,14 @@
     document.body.classList.add('cinematic');
     const stage = $stage();
     stage.style.opacity = '1';
+
+    // Per-scene state — uses the same sceneState[idx] pattern as all other
+    // scenes. Previously boardroom used top-level state.exploredSeats etc.,
+    // but those are now migrated to sceneState[1] in loadState().
+    if (!state.sceneState[state.currentScreen]) {
+      state.sceneState[state.currentScreen] = { explored: [], answered: false, answer: null, narrationCompleted: false };
+    }
+    const ss = state.sceneState[state.currentScreen];
 
     // Build the boardroom SVG
     const seatsSvg = scene.seats.map((seat, i) => {
@@ -932,8 +965,7 @@
           }
         },
         onComplete: () => {
-          state.narrationCompleted = true;
-          state.seatsRevealed = true;
+          ss.narrationCompleted = true;
           saveState();
           // Show progress bar
           document.getElementById('br-progress').classList.add('visible');
@@ -945,7 +977,7 @@
     }});
 
     // If narration already completed (returning to scene), enable immediately
-    if (state.narrationCompleted && state.seatsRevealed) {
+    if (ss.narrationCompleted) {
       // Skip narration, go straight to interactive mode
       Animator.clear();
       Narrator.hideNarrator();
@@ -953,15 +985,15 @@
       document.getElementById('br-progress').classList.add('visible');
       enableSeatClicks(scene);
       // Restore explored seats visual
-      state.exploredSeats.forEach(n => {
+      ss.explored.forEach(n => {
         const seatEl = document.getElementById('seat-' + n);
         if (seatEl) seatEl.classList.add('completed');
       });
       updateProgress(scene);
       // Restore assessment if answered
-      if (state.assessmentAnswered) {
+      if (ss.answered) {
         showAssessmentAnswer(scene);
-      } else if (state.exploredSeats.length === 6) {
+      } else if (ss.explored.length === 6) {
         // All seats explored but not yet answered — show + enable assessment
         document.getElementById('assessment-panel').classList.add('visible');
         enableBoardroomAssessment(scene);
@@ -972,10 +1004,11 @@
   }
 
   function enableSeatClicks(scene) {
+    const ss = state.sceneState[state.currentScreen];
     scene.seats.forEach(seat => {
       const el = document.getElementById('seat-' + seat.n);
       if (!el) return;
-      if (state.exploredSeats.includes(seat.n)) {
+      if (ss.explored.includes(seat.n)) {
         el.classList.add('completed');
       }
       el.addEventListener('click', () => openSeatModal(seat, scene));
@@ -1007,14 +1040,15 @@
       label: `المقعد ${arabicNumeral(seat.n)}: ${seat.label}`,
       onClose: () => {
         // Mark seat as explored
-        if (!state.exploredSeats.includes(seat.n)) {
-          state.exploredSeats.push(seat.n);
+        const ss = state.sceneState[state.currentScreen];
+        if (!ss.explored.includes(seat.n)) {
+          ss.explored.push(seat.n);
           const el = document.getElementById('seat-' + seat.n);
           if (el) el.classList.add('completed');
           saveState();
           updateProgress(scene);
           // If all 6 explored, reveal assessment
-          if (state.exploredSeats.length === 6 && !state.assessmentAnswered) {
+          if (ss.explored.length === 6 && !ss.answered) {
             setTimeout(() => {
               const panel = document.getElementById('assessment-panel');
               panel.classList.add('visible');
@@ -1032,8 +1066,9 @@
   }
 
   function updateProgress(scene) {
+    const ss = state.sceneState[state.currentScreen];
     const total = scene.seats.length;
-    const done = state.exploredSeats.length;
+    const done = ss.explored.length;
     document.getElementById('progress-text').textContent = `${arabicNumeral(done)} من ${arabicNumeral(total)}`;
     const dots = document.querySelectorAll('#progress-dots .progress-dot');
     dots.forEach((dot, i) => {
@@ -1049,10 +1084,11 @@
   }
 
   function enableBoardroomAssessment(scene) {
+    const ss = state.sceneState[state.currentScreen];
     const opts = document.querySelectorAll('#assessment-options .assessment-option');
     opts.forEach(opt => {
       opt.addEventListener('click', () => {
-        if (state.assessmentAnswered) return;
+        if (ss.answered) return;
         const idx = parseInt(opt.dataset.idx, 10);
         handleBoardroomAssessmentAnswer(idx, scene);
       });
@@ -1060,8 +1096,9 @@
   }
 
   function handleBoardroomAssessmentAnswer(idx, scene) {
-    state.assessmentAnswer = idx;
-    state.assessmentAnswered = true;
+    const ss = state.sceneState[state.currentScreen];
+    ss.answer = idx;
+    ss.answered = true;
     const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
@@ -1074,7 +1111,8 @@
   }
 
   function showAssessmentAnswer(scene) {
-    renderAssessmentResult(scene, state.assessmentAnswer);
+    const ss = state.sceneState[state.currentScreen];
+    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -2155,9 +2193,6 @@
       ss.answer = null;
       ss.answered = false;
     }
-    // Also reset legacy boardroom state
-    state.assessmentAnswer = null;
-    state.assessmentAnswered = false;
     // Reset score for this scene and recompute total via Scoring module.
     Scoring.recordScene(state.currentScreen, false);
     Scoring.commit();
