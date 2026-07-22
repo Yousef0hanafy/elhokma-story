@@ -34,6 +34,9 @@
 
   // ---------- Init ----------
   function init() {
+    // Install global error handlers first — before anything can throw.
+    if (window.ErrorBoundary) ErrorBoundary.install();
+
     // Detect dev mode (?dev=1 in URL)
     const urlParams = new URLSearchParams(window.location.search);
     const isDev = urlParams.get('dev') === '1' || urlParams.get('dev') === 'true';
@@ -561,15 +564,20 @@
       document.getElementById('subtitle-bar').classList.remove('visible', 'controls-visible');
       document.body.classList.remove('cinematic');
 
-      // Render scene-specific content
-      if (scene.id === 'opening') renderOpening(scene);
-      else if (scene.id === 'boardroom') renderBoardroom(scene);
-      else if (scene.id === 'framework') renderFramework(scene);
-      else if (scene.id === 'pillars') renderPillars(scene);
-      else if (scene.id === 'court') renderCourt(scene);
-      else if (scene.id === 'integrity') renderIntegrity(scene);
-      else if (scene.id === 'dilemma') renderDilemma(scene);
-      else renderComingSoon(scene);
+      // Render scene-specific content (guarded so a throw in any renderer
+      // shows the recovery UI instead of leaving the stage blank).
+      const dispatch = () => {
+        if (scene.id === 'opening') renderOpening(scene);
+        else if (scene.id === 'boardroom') renderBoardroom(scene);
+        else if (scene.id === 'framework') renderFramework(scene);
+        else if (scene.id === 'pillars') renderPillars(scene);
+        else if (scene.id === 'court') renderCourt(scene);
+        else if (scene.id === 'integrity') renderIntegrity(scene);
+        else if (scene.id === 'dilemma') renderDilemma(scene);
+        else renderComingSoon(scene);
+      };
+      if (window.ErrorBoundary) ErrorBoundary.guard('renderScene:' + scene.id, dispatch);
+      else dispatch();
 
       saveState();
     });
@@ -581,8 +589,8 @@
     stage.style.opacity = '1';
     stage.innerHTML = `
       <div class="scene-cover">
-        <div class="scene-eyebrow anim-fade-up" style="opacity:1">${scene.eyebrow || ''}</div>
-        <h1 class="scene-title anim-fade-up" style="opacity:1; animation-delay:0.2s">${scene.title || ''}</h1>
+        <div class="scene-eyebrow anim-fade-up" style="opacity:1">${escapeHtml(scene.eyebrow || '')}</div>
+        <h1 class="scene-title anim-fade-up" style="opacity:1; animation-delay:0.2s">${escapeHtml(scene.title || '')}</h1>
         <div class="scene-subtitle anim-fade-up" style="opacity:1; animation-delay:0.4s">
           المشهد ${arabicNumeral(scene.scene_number)} — قيد الإنتاج
         </div>
@@ -620,12 +628,12 @@
 
     stage.innerHTML = `
       <div class="scene-cover">
-        <div class="scene-eyebrow" id="eyebrow">${scene.eyebrow}</div>
+        <div class="scene-eyebrow" id="eyebrow">${escapeHtml(scene.eyebrow)}</div>
         <h1 class="scene-title" id="hero-title">
-          رحلة <span class="accent">${scene.hero_title_accent}</span>
+          رحلة <span class="accent">${escapeHtml(scene.hero_title_accent)}</span>
         </h1>
-        <div class="scene-subtitle" id="hero-subtitle">${scene.subtitle}</div>
-        <div class="scene-story" id="hero-story">${scene.story_hook}</div>
+        <div class="scene-subtitle" id="hero-subtitle">${escapeHtml(scene.subtitle)}</div>
+        <div class="scene-story" id="hero-story">${escapeHtml(scene.story_hook)}</div>
       </div>
     `;
 
@@ -649,7 +657,7 @@
         typeTitle(document.getElementById('hero-title'), 'رحلة ' + scene.hero_title_accent, 60, () => {
           // Highlight accent after typing completes
           const titleEl = document.getElementById('hero-title');
-          titleEl.innerHTML = `رحلة <span class="accent">${scene.hero_title_accent}</span>`;
+          titleEl.innerHTML = `رحلة <span class="accent">${escapeHtml(scene.hero_title_accent)}</span>`;
         });
       }});
       tl.push({ time: 3.0, fn: () => document.getElementById('hero-subtitle').classList.add('anim-fade-up') });
@@ -738,9 +746,9 @@
     stage.innerHTML = `
       <div class="scene-boardroom">
         <div class="boardroom-header" id="br-header">
-          <div class="boardroom-eyebrow">${scene.eyebrow}</div>
-          <h2 class="boardroom-title">${scene.hero_title}</h2>
-          <p class="boardroom-instruction" id="br-instruction">${scene.instruction}</p>
+          <div class="boardroom-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="boardroom-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="boardroom-instruction" id="br-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
 
         <div class="boardroom-stage" id="br-stage">
@@ -774,12 +782,12 @@
 
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -975,7 +983,7 @@
       <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
         ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
       </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
     `;
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
@@ -1055,7 +1063,7 @@
       <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
         ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
       </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
     `;
     document.getElementById('assessment-panel').classList.add('visible');
   }
@@ -1087,9 +1095,9 @@
     stage.innerHTML = `
       <div class="scene-framework">
         <div class="framework-header" id="fw-header">
-          <div class="framework-eyebrow">${scene.eyebrow}</div>
-          <h2 class="framework-title">${scene.hero_title}</h2>
-          <p class="framework-instruction">${scene.instruction}</p>
+          <div class="framework-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="framework-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="framework-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
         <div class="framework-tower" id="fw-tower">${layersHtml}</div>
         <div class="framework-progress" id="fw-progress">
@@ -1101,12 +1109,12 @@
         </div>
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -1273,7 +1281,7 @@
       <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
         ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
       </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
     `;
     document.getElementById('assessment-panel').classList.add('visible');
   }
@@ -1294,26 +1302,26 @@
     stage.innerHTML = `
       <div class="scene-pillars">
         <div class="pillars-header" id="pl-header">
-          <div class="pillars-eyebrow">${scene.eyebrow}</div>
-          <h2 class="pillars-title">${scene.hero_title}</h2>
-          <p class="pillars-instruction">${scene.instruction}</p>
+          <div class="pillars-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="pillars-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="pillars-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
         <div class="pillars-stage" id="pl-stage">
           <div class="pillars-arch" id="pl-arch">الاستدامة</div>
           <div class="pillar gov" id="pillar-gov" data-pillar="gov" tabindex="0" role="button" aria-label="ركيزة الحوكمة">
             <div class="pillar-icon">ح</div>
-            <div class="pillar-label">${scene.pillars.gov.label}</div>
-            <div class="pillar-subtitle">${scene.pillars.gov.subtitle}</div>
-            <div class="pillar-question">${scene.pillars.gov.question}</div>
+            <div class="pillar-label">${escapeHtml(scene.pillars.gov.label)}</div>
+            <div class="pillar-subtitle">${escapeHtml(scene.pillars.gov.subtitle)}</div>
+            <div class="pillar-question">${escapeHtml(scene.pillars.gov.question)}</div>
             <div class="pillar-facets">
               ${scene.pillars.gov.facets.map(f => `<div class="pillar-facet">${escapeHtml(f)}</div>`).join('')}
             </div>
           </div>
           <div class="pillar comp" id="pillar-comp" data-pillar="comp" tabindex="0" role="button" aria-label="ركيزة الامتثال">
             <div class="pillar-icon">ا</div>
-            <div class="pillar-label">${scene.pillars.comp.label}</div>
-            <div class="pillar-subtitle">${scene.pillars.comp.subtitle}</div>
-            <div class="pillar-question">${scene.pillars.comp.question}</div>
+            <div class="pillar-label">${escapeHtml(scene.pillars.comp.label)}</div>
+            <div class="pillar-subtitle">${escapeHtml(scene.pillars.comp.subtitle)}</div>
+            <div class="pillar-question">${escapeHtml(scene.pillars.comp.question)}</div>
             <div class="pillar-facets">
               ${scene.pillars.comp.facets.map(f => `<div class="pillar-facet">${escapeHtml(f)}</div>`).join('')}
             </div>
@@ -1329,12 +1337,12 @@
         </div>
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -1484,7 +1492,7 @@
       <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
         ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
       </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
     `;
     document.getElementById('assessment-panel').classList.add('visible');
   }
@@ -1511,8 +1519,8 @@
     stage.innerHTML = `
       <div class="scene-court">
         <div class="court-header" id="ct-header">
-          <div class="court-eyebrow">${scene.eyebrow}</div>
-          <h2 class="court-title">${scene.hero_title}</h2>
+          <div class="court-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="court-title">${escapeHtml(scene.hero_title)}</h2>
           <p class="court-scenario">${escapeHtml(scene.scenario)}</p>
         </div>
         <div class="court-progress" id="ct-progress">
@@ -1521,12 +1529,12 @@
         <div id="ct-case-container"></div>
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">القاعدة الذهبية</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -1676,7 +1684,7 @@
       <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
         ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
       </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
     `;
     document.getElementById('assessment-panel').classList.add('visible');
   }
@@ -1739,9 +1747,9 @@
     stage.innerHTML = `
       <div class="scene-integrity">
         <div class="integrity-header" id="in-header">
-          <div class="integrity-eyebrow">${scene.eyebrow}</div>
-          <h2 class="integrity-title">${scene.hero_title}</h2>
-          <p class="integrity-instruction">${scene.instruction}</p>
+          <div class="integrity-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="integrity-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="integrity-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
         <div class="integrity-stage" id="in-stage">
           <svg class="integrity-svg" viewBox="0 0 560 560" xmlns="http://www.w3.org/2000/svg">
@@ -1770,12 +1778,12 @@
         </div>
         <div class="assessment-panel" id="assessment-panel">
           <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${scene.assessment.question}</div>
+          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
           <div class="assessment-options" id="assessment-options">
             ${scene.assessment.options.map((opt, i) => `
               <button class="assessment-option" data-idx="${i}" type="button">
                 <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${opt}</span>
+                <span class="option-text">${escapeHtml(opt)}</span>
               </button>
             `).join('')}
           </div>
@@ -1947,7 +1955,7 @@
       <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
         ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
       </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
     `;
     document.getElementById('assessment-panel').classList.add('visible');
   }
@@ -1974,9 +1982,9 @@
     stage.innerHTML = `
       <div class="scene-dilemma">
         <div class="dilemma-header" id="dl-header">
-          <div class="dilemma-eyebrow">${scene.eyebrow}</div>
-          <h2 class="dilemma-title">${scene.hero_title}</h2>
-          <p class="dilemma-instruction">${scene.instruction}</p>
+          <div class="dilemma-eyebrow">${escapeHtml(scene.eyebrow)}</div>
+          <h2 class="dilemma-title">${escapeHtml(scene.hero_title)}</h2>
+          <p class="dilemma-instruction">${escapeHtml(scene.instruction)}</p>
         </div>
         <div class="dilemma-progress" id="dl-progress">
           ${scene.phases.map(p => `<div class="dilemma-progress-dot" data-phase="${p.n}">${arabicNumeral(p.n)}</div>`).join('')}
@@ -2214,7 +2222,7 @@
       <span class="feedback-label ${correct ? 'correct' : 'incorrect'}">
         ${correct ? '✓ إجابة صحيحة' : '✗ إجابة غير صحيحة'}
       </span>
-      ${correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback}
+      ${escapeHtml(correct ? scene.assessment.correct_feedback : scene.assessment.incorrect_feedback)}
     `;
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
