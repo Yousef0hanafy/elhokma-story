@@ -35,29 +35,27 @@
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="application-name" content="رحلة الحوكمة">
 
-  <!-- Fonts: non-blocking preload + async load.
-       preconnect warms the TLS handshake; the stylesheet loads without
-       blocking first paint, and we have system-font fallbacks in CSS
-       so the page is usable immediately. -->
+  <!-- Fonts: preconnect warms TLS; the stylesheet itself is loaded
+       asynchronously by app.js (createElement('link')) to avoid blocking
+       first paint and to comply with the CSP (no inline onload handler).
+       CSS has system-font fallbacks so the page is usable immediately. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
-  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap"></noscript>
 
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/animations.css">
   <link rel="stylesheet" href="css/scenes.css">
 
-  <!-- Register service worker for offline use (LMS environments often have flaky connectivity) -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', function () {
-        navigator.serviceWorker.register('sw.js').catch(function (e) {
-          console.info('[SW] registration failed (expected in SCORM sandbox):', e);
-        });
-      });
-    }
-  </script>
+  <!-- Content Security Policy: restricts script/style/font/image sources
+       to defend against XSS even if a content injection slips through.
+       - script-src 'self': no inline scripts, no eval, no CDN scripts
+       - style-src 'self' 'unsafe-inline' https://fonts.googleapis.com:
+         inline styles (used by JS for transitions) + Google Fonts stylesheet
+       - font-src 'self' https://fonts.gstatic.com: Google Fonts file delivery
+       - img-src 'self' data: inline SVG/data URIs
+       - connect-src 'self': no external API calls
+       - base-uri 'none', form-action 'none', object-src 'none': hardening -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 </head>
 <body>
 
@@ -125,8 +123,8 @@
   <div class="subtitle-bar" id="subtitle-bar" aria-live="polite" aria-atomic="true">
     <div class="subtitle-text" id="subtitle-text"></div>
     <div class="subtitle-controls">
-      <button class="sub-btn" id="replay-btn" type="button" aria-label="إعادة السرد">↺</button>
-      <button class="sub-btn" id="skip-btn" type="button" aria-label="تخطّي السرد">»</button>
+      <button class="sub-btn" id="replay-btn" type="button" aria-label="إعادة السرد" disabled>↺</button>
+      <button class="sub-btn" id="skip-btn" type="button" aria-label="تخطّي السرد" disabled>»</button>
     </div>
   </div>
 

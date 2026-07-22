@@ -54,8 +54,17 @@
         console.info('[SCORM] Initialized');
         return true;
       }
+      // LMSInitialize returned false — the LMS is present but refused to
+      // initialize (e.g., duplicate init, session limit). Fall back to
+      // standalone mode so the learner can still progress and we persist
+      // to localStorage rather than dropping all state on the floor.
+      console.warn('[SCORM] LMSInitialize returned false — falling back to standalone');
+      SCORM.api = null;
+      SCORM.isStandalone = true;
     } catch (e) {
-      console.warn('[SCORM] LMSInitialize threw:', e);
+      console.warn('[SCORM] LMSInitialize threw — falling back to standalone:', e);
+      SCORM.api = null;
+      SCORM.isStandalone = true;
     }
     return false;
   }
@@ -171,9 +180,15 @@
   startSessionTimer();
 
   // ---------- Unload handling ----------
-  // beforeunload is unreliable on mobile Safari / Chrome iOS. pagehide + visibilitychange
-  // cover those cases. We bind all three but finish() is idempotent (SCORM.finished guard).
-  function handleUnload() {
+  // beforeunload is unreliable on mobile Safari / Chrome iOS. pagehide covers
+  // those cases. CRITICAL: pagehide fires with persisted=true when the page is
+  // entering the back-forward cache (bfcache) — in that case we must NOT call
+  // finish(), because the page may be restored later and the SCORM session
+  // would be dead. We only finish on actual page disposal.
+  function handleUnload(event) {
+    // event.persisted === true means the page is going into bfcache, not
+    // being destroyed. Do NOT terminate the SCORM session.
+    if (event && event.persisted) return;
     try {
       if (!SCORM.finished) {
         set('cmi.core.session_time', fmtTime());
@@ -183,9 +198,22 @@
   }
   global.addEventListener('beforeunload', handleUnload);
   global.addEventListener('pagehide', handleUnload);
+
+  // pageshow with persisted=true fires when the page is restored from bfcache.
+  // The SCORM session is still alive (we didn't finish), but the session timer
+  // may have been stopped by a visibilitychange handler. Restart tracking.
+  global.addEventListener('pageshow', (event) => {
+    if (event && event.persisted) {
+      // Page restored from bfcache — ensure the session timer is running.
+      startSessionTimer();
+    }
+  });
+
   document.addEventListener('visibilitychange', () => {
     // On hidden (tab switch / backgrounded), flush session time — some LMS
     // environments never see beforeunload if the user just closes the tab.
+    // We commit but do NOT finish — the session stays alive so the learner
+    // can return.
     if (document.visibilityState === 'hidden' && !SCORM.finished) {
       try {
         set('cmi.core.session_time', fmtTime());

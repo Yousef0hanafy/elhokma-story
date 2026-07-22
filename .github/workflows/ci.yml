@@ -111,38 +111,149 @@ jobs:
             const browser = await chromium.launch();
             const page = await browser.newPage();
             const errors = [];
-            page.on('pageerror', e => errors.push(e.message));
+            page.on('pageerror', e => errors.push('PageError: ' + e.message));
             page.on('console', msg => {
-              if (msg.type() === 'error') errors.push('CONSOLE: ' + msg.text());
+              if (msg.type() === 'error') errors.push('ConsoleError: ' + msg.text());
+            });
+            // Capture CSP violations
+            page.on('requestfailed', req => {
+              const url = req.url();
+              if (url.includes('fonts.g')) return; // fonts may fail in CI
+              errors.push('RequestFailed: ' + url + ' ' + req.failure()?.errorText);
             });
             await page.goto('http://localhost:8765/', { waitUntil: 'networkidle' });
             await page.waitForTimeout(3000);
 
-            // Verify the app initialized
+            // 1. Verify the app initialized
             const title = await page.title();
             if (!title.includes('رحلة الحوكمة')) {
               errors.push('Title mismatch: ' + title);
             }
 
-            // Verify stage has content
+            // 2. Verify stage has content
             const stageContent = await page.evaluate(() => document.getElementById('stage').innerHTML.length);
             if (stageContent < 100) {
               errors.push('Stage appears empty (length=' + stageContent + ')');
             }
 
-            // Verify no error boundary UI
+            // 3. Verify no error boundary UI
             const hasError = await page.evaluate(() => document.querySelector('[role=alert]') !== null);
             if (hasError) {
               errors.push('Error boundary UI is visible');
             }
 
+            // 4. Verify skip link exists and is focusable
+            const skipLink = await page.evaluate(() => {
+              const sl = document.querySelector('.skip-link');
+              return sl ? { exists: true, tag: sl.tagName } : { exists: false };
+            });
+            if (!skipLink.exists) {
+              errors.push('Skip link not found');
+            }
+
+            // 5. Verify CSP meta tag is present
+            const cspPresent = await page.evaluate(() => 
+              document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]') !== null
+            );
+            if (!cspPresent) {
+              errors.push('CSP meta tag not found');
+            }
+
+            // 6. Verify SCORM initialized in standalone mode
+            const scormOk = await page.evaluate(() => 
+              window.ScormApi && window.ScormApi.isStandalone()
+            );
+            if (!scormOk) {
+              errors.push('SCORM standalone mode not detected');
+            }
+
+            // 7. Verify all core modules loaded
+            const modulesOk = await page.evaluate(() => ({
+              errorBoundary: !!window.ErrorBoundary,
+              tts: !!window.TTS,
+              narrator: !!window.Narrator,
+              animator: !!window.Animator,
+              modalManager: !!window.ModalManager,
+              scormApi: !!window.ScormApi,
+            }));
+            for (const [mod, ok] of Object.entries(modulesOk)) {
+              if (!ok) errors.push('Module not loaded: ' + mod);
+            }
+
+            // 8. Navigate: dismiss TTS overlay → wait for narration → skip → click CTA → verify scene 2
+            await page.evaluate(() => {
+              const click = (el) => el && el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+              click(document.getElementById('tts-skip-btn'));
+            });
+            await page.waitForTimeout(500);
+            // Wait until the skip button is enabled (narration has started) —
+            // the opening scene delays narration start to 4.5s after render.
+            await page.waitForFunction(() => {
+              const btn = document.getElementById('skip-btn');
+              return btn && !btn.disabled;
+            }, { timeout: 10000 });
+            await page.evaluate(() => {
+              document.getElementById('skip-btn')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
+            await page.waitForTimeout(800);
+            await page.evaluate(() => {
+              document.getElementById('cta-btn')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
+            await page.waitForTimeout(2500);
+
+            const scene2Heading = await page.evaluate(() => 
+              document.querySelector('#stage h2')?.textContent
+            );
+            if (!scene2Heading || scene2Heading.indexOf('غرفة القرار') === -1) {
+              errors.push('Scene 2 did not render. Heading: ' + scene2Heading);
+            }
+
+            // 9. Test modal: wait for scene 2 narration → skip → open seat → verify focus in modal
+            await page.waitForFunction(() => {
+              const btn = document.getElementById('skip-btn');
+              return btn && !btn.disabled;
+            }, { timeout: 10000 });
+            await page.evaluate(() => {
+              document.getElementById('skip-btn')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
+            await page.waitForTimeout(2500);
+            await page.evaluate(() => {
+              document.getElementById('seat-1')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
+            await page.waitForTimeout(800);
+
+            const modalFocus = await page.evaluate(() => {
+              const modal = document.querySelector('.seat-modal');
+              if (!modal) return { modalOpen: false };
+              return {
+                modalOpen: true,
+                focusInModal: modal.contains(document.activeElement),
+                activeClass: document.activeElement?.className,
+              };
+            });
+            if (!modalFocus.modalOpen) {
+              errors.push('Seat modal did not open');
+            } else if (!modalFocus.focusInModal) {
+              errors.push('Focus not in modal after open. Active: ' + modalFocus.activeClass);
+            }
+
+            // 10. Verify aria-hidden preserved on loader after modal open
+            const ariaOk = await page.evaluate(() => {
+              const loader = document.getElementById('loader');
+              return loader?.getAttribute('aria-hidden') === 'true';
+            });
+            if (!ariaOk) {
+              errors.push('Loader aria-hidden corrupted by modal');
+            }
+
             await browser.close();
 
             if (errors.length) {
-              console.error('❌ Smoke test failed:', errors);
+              console.error('❌ Smoke test failed:');
+              errors.forEach(e => console.error('  - ' + e));
               process.exit(1);
             }
-            console.log('✓ Smoke test passed — app loads without errors');
+            console.log('✓ Smoke test passed — app loads, navigates, modal traps focus, aria-hidden preserved');
           })();
           "
 

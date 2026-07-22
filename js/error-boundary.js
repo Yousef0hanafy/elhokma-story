@@ -74,6 +74,8 @@
     try { if (global.TTS) TTS.cancel(); } catch (e) {}
     try { if (global.Narrator) { Narrator.skipRequested = true; Narrator.hideNarrator(); } } catch (e) {}
     try { if (global.Animator) Animator.clear(); } catch (e) {}
+    // Close any open modal so it doesn't sit on top of the error UI.
+    try { if (global.ModalManager && global.ModalManager.isOpen()) global.ModalManager.close(); } catch (e) {}
 
     const loader = document.getElementById('loader');
     if (loader) loader.classList.add('hidden');

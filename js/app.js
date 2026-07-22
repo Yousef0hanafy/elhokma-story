@@ -32,6 +32,38 @@
   const $toast = () => document.getElementById('toast');
   const $narratorAvatar = () => document.getElementById('narrator-avatar');
 
+  // ---------- Fonts & Service Worker (CSP-compliant async loading) ----------
+
+  // Load Google Fonts via JS to avoid inline onload handlers (CSP script-src 'self').
+  // The link is created with rel=stylesheet but media=print so it downloads without
+  // blocking render; once loaded, media swaps to 'all' to apply the fonts.
+  function loadFontsAsync() {
+    const href = 'https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap';
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.media = 'print'; // download without blocking render
+    link.onload = function () { link.media = 'all'; };
+    document.head.appendChild(link);
+  }
+
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    // Delay registration until after load so it never competes with first paint.
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function (e) {
+        console.info('[SW] registration failed (expected in SCORM sandbox):', e);
+      });
+      // If a new SW takes over, prompt the user to refresh so they get the
+      // latest code immediately rather than running stale JS for this session.
+      navigator.serviceWorker.addEventListener('message', function (event) {
+        if (event.data && event.data.type === 'SW_UPDATED') {
+          showToast('تم تحديث التطبيق — أعد التحميل للحصول على أحدث نسخة', 'success');
+        }
+      });
+    });
+  }
+
   // ---------- Init ----------
   function init() {
     // Install global error handlers first — before anything can throw.
@@ -41,6 +73,14 @@
     const urlParams = new URLSearchParams(window.location.search);
     const isDev = urlParams.get('dev') === '1' || urlParams.get('dev') === 'true';
     if (isDev) document.body.classList.add('dev-mode');
+
+    // Load Google Fonts asynchronously (CSP-compliant: no inline onload).
+    // The CSS has system-font fallbacks so the page is usable immediately.
+    loadFontsAsync();
+
+    // Register service worker for offline support. In SCORM sandboxed
+    // iframes, registration may fail — that's fine, the page works without it.
+    registerServiceWorker();
 
     window.ScormApi.init();
     loadState();

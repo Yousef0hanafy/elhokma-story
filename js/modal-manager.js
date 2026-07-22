@@ -44,24 +44,42 @@
     document.body.appendChild(overlay);
     document.body.classList.add('modal-open');
 
-    // Hide the rest of the page from screen readers
+    // Hide the rest of the page from screen readers.
+    // CRITICAL: only set aria-hidden on elements that don't ALREADY have it.
+    // The loader, letterbox bars, etc. start with aria-hidden="true" in the
+    // HTML. If we blindly removeAttribute on close, we'd corrupt their
+    // original state. We track which elements WE modified via a data
+    // attribute and only restore those.
     document.querySelectorAll('body > *:not(.seat-modal)').forEach(el => {
-      if (el.id !== 'toast') {
-        el.setAttribute('aria-hidden', 'true');
-        el.dataset.modalHidden = '1';
-      }
+      if (el.id === 'toast') return;
+      if (el.getAttribute('aria-hidden') === 'true') return; // already hidden — leave it alone
+      el.setAttribute('aria-hidden', 'true');
+      el.dataset.modalHidden = '1';
     });
 
-    requestAnimationFrame(() => overlay.classList.add('visible'));
-
-    // Move focus into the modal
-    const firstFocusable = overlay.querySelector(FOCUSABLE) || overlay;
-    firstFocusable.focus();
+    // Make the modal visible first, THEN move focus. Calling focus() on an
+    // element inside a visibility:hidden container is a no-op in most
+    // browsers — the focus would stay on the background, breaking the
+    // focus trap and screen-reader experience.
+    overlay.classList.add('visible');
 
     ModalManager.current = {
       overlay,
       onClose: opts.onClose || null,
     };
+
+    // Move focus into the modal after the browser has painted the visible
+    // state. requestAnimationFrame ensures the visibility change is applied.
+    requestAnimationFrame(() => {
+      const firstFocusable = overlay.querySelector(FOCUSABLE);
+      if (firstFocusable) {
+        firstFocusable.focus();
+      } else {
+        // No focusable child — focus the overlay itself so Tab has a anchor.
+        overlay.setAttribute('tabindex', '-1');
+        overlay.focus();
+      }
+    });
 
     // Backdrop click
     overlay.addEventListener('click', (e) => {
