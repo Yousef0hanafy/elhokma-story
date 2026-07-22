@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80">
+  <rect width="80" height="80" rx="16" fill="#0B1F33"/>
+  <circle cx="40" cy="40" r="30" fill="none" stroke="#D4AF37" stroke-width="3"/>
+  <text x="40" y="52" text-anchor="middle" fill="#D4AF37" font-family="Tajawal, sans-serif" font-size="36" font-weight="900">ح</text>
+</svg>

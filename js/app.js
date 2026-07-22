@@ -892,51 +892,45 @@
   }
 
   function openSeatModal(seat, scene) {
-    // Build modal
-    const modal = document.createElement('div');
-    modal.className = 'seat-modal';
-    modal.innerHTML = `
-      <div class="seat-modal-card">
+    // Build modal content via ModalManager for proper focus trap + a11y
+    const content = `
+      <div class="seat-modal-card" tabindex="-1">
         <div class="seat-modal-num">${arabicNumeral(seat.n)}</div>
         <div class="seat-modal-eyebrow">المقعد ${arabicNumeral(seat.n)} من ٦</div>
-        <h3 class="seat-modal-title">${seat.label}</h3>
-        <div class="seat-modal-story">${seat.story}</div>
+        <h3 class="seat-modal-title">${escapeHtml(seat.label)}</h3>
+        <div class="seat-modal-story">${escapeHtml(seat.story)}</div>
         <div class="seat-modal-def-label">التعريف الرسمي</div>
-        <div class="seat-modal-def">${seat.definition}</div>
+        <div class="seat-modal-def">${escapeHtml(seat.definition)}</div>
         <button class="seat-modal-close" type="button">فهمت</button>
       </div>
     `;
-    document.body.appendChild(modal);
-    requestAnimationFrame(() => modal.classList.add('visible'));
-
-    const close = () => {
-      modal.classList.remove('visible');
-      setTimeout(() => modal.remove(), 300);
-      // Mark seat as explored
-      if (!state.exploredSeats.includes(seat.n)) {
-        state.exploredSeats.push(seat.n);
-        const el = document.getElementById('seat-' + seat.n);
-        if (el) el.classList.add('completed');
-        saveState();
-        updateProgress(scene);
-        // If all 6 explored, reveal assessment
-        if (state.exploredSeats.length === 6 && !state.assessmentAnswered) {
-          setTimeout(() => {
-            const panel = document.getElementById('assessment-panel');
-            panel.classList.add('visible');
-            enableBoardroomAssessment(scene);
-            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            showToast('أحسنت! اختبر فهمك الآن', 'success');
-          }, 400);
+    ModalManager.open({
+      content,
+      label: `المقعد ${arabicNumeral(seat.n)}: ${seat.label}`,
+      onClose: () => {
+        // Mark seat as explored
+        if (!state.exploredSeats.includes(seat.n)) {
+          state.exploredSeats.push(seat.n);
+          const el = document.getElementById('seat-' + seat.n);
+          if (el) el.classList.add('completed');
+          saveState();
+          updateProgress(scene);
+          // If all 6 explored, reveal assessment
+          if (state.exploredSeats.length === 6 && !state.assessmentAnswered) {
+            setTimeout(() => {
+              const panel = document.getElementById('assessment-panel');
+              panel.classList.add('visible');
+              enableBoardroomAssessment(scene);
+              panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              showToast('أحسنت! اختبر فهمك الآن', 'success');
+            }, 400);
+          }
         }
-      }
-    };
-
-    modal.querySelector('.seat-modal-close').addEventListener('click', close);
-    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-    document.addEventListener('keydown', function escHandler(e) {
-      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
+      },
     });
+    // Wire close button inside the modal
+    const closeBtn = ModalManager.current.overlay.querySelector('.seat-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => ModalManager.close());
   }
 
   function updateProgress(scene) {
@@ -1204,10 +1198,8 @@
   }
 
   function openLayerModal(layer, scene) {
-    const modal = document.createElement('div');
-    modal.className = 'seat-modal';
-    modal.innerHTML = `
-      <div class="seat-modal-card">
+    const content = `
+      <div class="seat-modal-card" tabindex="-1">
         <div class="seat-modal-num">${layer.icon}</div>
         <div class="seat-modal-eyebrow">الطبقة ${arabicNumeral(layer.n)} من ${arabicNumeral(scene.layers.length)}</div>
         <h3 class="seat-modal-title">${escapeHtml(layer.label)}</h3>
@@ -1217,35 +1209,30 @@
         <button class="seat-modal-close" type="button">فهمت</button>
       </div>
     `;
-    document.body.appendChild(modal);
-    requestAnimationFrame(() => modal.classList.add('visible'));
-
-    const close = () => {
-      modal.classList.remove('visible');
-      setTimeout(() => modal.remove(), 300);
-      const ss = state.sceneState[state.currentScreen];
-      if (!ss.explored.includes(layer.n)) {
-        ss.explored.push(layer.n);
-        const el = document.querySelector(`.framework-layer[data-layer="${layer.n}"]`);
-        if (el) el.classList.add('completed');
-        saveState();
-        updateFrameworkProgress(scene);
-        if (ss.explored.length === scene.layers.length && !ss.answered) {
-          setTimeout(() => {
-            document.getElementById('assessment-panel').classList.add('visible');
-            enableAssessment(scene, 'framework');
-            document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-            showToast('أحسنت! اختبر فهمك الآن', 'success');
-          }, 400);
+    ModalManager.open({
+      content,
+      label: `الطبقة ${arabicNumeral(layer.n)}: ${layer.label}`,
+      onClose: () => {
+        const ss = state.sceneState[state.currentScreen];
+        if (!ss.explored.includes(layer.n)) {
+          ss.explored.push(layer.n);
+          const el = document.querySelector(`.framework-layer[data-layer="${layer.n}"]`);
+          if (el) el.classList.add('completed');
+          saveState();
+          updateFrameworkProgress(scene);
+          if (ss.explored.length === scene.layers.length && !ss.answered) {
+            setTimeout(() => {
+              document.getElementById('assessment-panel').classList.add('visible');
+              enableAssessment(scene, 'framework');
+              document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+              showToast('أحسنت! اختبر فهمك الآن', 'success');
+            }, 400);
+          }
         }
-      }
-    };
-
-    modal.querySelector('.seat-modal-close').addEventListener('click', close);
-    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-    document.addEventListener('keydown', function escHandler(e) {
-      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
+      },
     });
+    const closeBtn = ModalManager.current.overlay.querySelector('.seat-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => ModalManager.close());
   }
 
   function updateFrameworkProgress(scene) {
@@ -1861,8 +1848,6 @@
   }
 
   function openStarModal(star, scene) {
-    const modal = document.createElement('div');
-    modal.className = 'seat-modal';
     let frameworkHtml = '';
     if (star.hasFramework && star.framework) {
       frameworkHtml = `
@@ -1879,8 +1864,8 @@
         </div>
       `;
     }
-    modal.innerHTML = `
-      <div class="seat-modal-card">
+    const content = `
+      <div class="seat-modal-card" tabindex="-1">
         <div class="seat-modal-num">${star.icon}</div>
         <div class="seat-modal-eyebrow">${star.isCenter ? 'النجم المركزي' : 'النجم ' + arabicNumeral(star.n) + ' من ' + arabicNumeral(scene.stars.length)}</div>
         <h3 class="seat-modal-title">${escapeHtml(star.label)}</h3>
@@ -1891,35 +1876,30 @@
         <button class="seat-modal-close" type="button">فهمت</button>
       </div>
     `;
-    document.body.appendChild(modal);
-    requestAnimationFrame(() => modal.classList.add('visible'));
-
-    const close = () => {
-      modal.classList.remove('visible');
-      setTimeout(() => modal.remove(), 300);
-      const ss = state.sceneState[state.currentScreen];
-      if (!ss.explored.includes(star.n)) {
-        ss.explored.push(star.n);
-        const el = document.getElementById(`star-${star.n}`);
-        if (el) el.classList.add('completed');
-        saveState();
-        updateIntegrityProgress(scene);
-        if (ss.explored.length === scene.stars.length && !ss.answered) {
-          setTimeout(() => {
-            document.getElementById('assessment-panel').classList.add('visible');
-            enableAssessment(scene, 'integrity');
-            document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-            showToast('أحسنت! اختبر فهمك الآن', 'success');
-          }, 400);
+    ModalManager.open({
+      content,
+      label: `${star.isCenter ? 'النجم المركزي' : 'النجم ' + arabicNumeral(star.n)}: ${star.label}`,
+      onClose: () => {
+        const ss = state.sceneState[state.currentScreen];
+        if (!ss.explored.includes(star.n)) {
+          ss.explored.push(star.n);
+          const el = document.getElementById(`star-${star.n}`);
+          if (el) el.classList.add('completed');
+          saveState();
+          updateIntegrityProgress(scene);
+          if (ss.explored.length === scene.stars.length && !ss.answered) {
+            setTimeout(() => {
+              document.getElementById('assessment-panel').classList.add('visible');
+              enableAssessment(scene, 'integrity');
+              document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+              showToast('أحسنت! اختبر فهمك الآن', 'success');
+            }, 400);
+          }
         }
-      }
-    };
-
-    modal.querySelector('.seat-modal-close').addEventListener('click', close);
-    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-    document.addEventListener('keydown', function escHandler(e) {
-      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
+      },
     });
+    const closeBtn = ModalManager.current.overlay.querySelector('.seat-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => ModalManager.close());
   }
 
   function updateIntegrityProgress(scene) {

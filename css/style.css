@@ -1065,15 +1065,68 @@ body.cinematic .letterbox { height: 56px; }
 }
 
 /* ---------- A11y ---------- */
-button:focus-visible, .seat:focus-visible, .assessment-option:focus-visible {
+button:focus-visible,
+.seat:focus-visible,
+.assessment-option:focus-visible,
+.dilemma-option:focus-visible,
+.court-btn:focus-visible,
+[tabindex]:focus-visible {
   outline: 3px solid var(--gold);
   outline-offset: 3px;
+}
+
+/* Skip link — visible only when focused via keyboard */
+.skip-link {
+  position: fixed;
+  top: -100px;
+  right: 50%;
+  transform: translateX(50%);
+  z-index: 2000;
+  background: var(--gold);
+  color: var(--bg-deep);
+  padding: 10px 20px;
+  border-radius: 0 0 12px 12px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+  transition: top 0.2s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.skip-link:focus {
+  top: 0;
+  outline: 3px solid var(--cream);
+  outline-offset: 2px;
+}
+
+/* Screen-reader-only utility */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Modal focus trap helpers — when a modal is open, prevent the body from
+   scrolling and dim background content from screen readers via aria-hidden. */
+body.modal-open { overflow: hidden; }
+.seat-modal {
+  /* Ensure the modal itself is focusable and announced */
+  outline: none;
+}
+.seat-modal-card {
+  /* First focusable inside modal gets a visible focus ring */
+  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 
