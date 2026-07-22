@@ -29,6 +29,9 @@ jobs:
             fi
           done
 
+      - name: Run unit tests
+        run: ./scripts/test.sh
+
       - name: Validate JSON (manifest)
         run: |
           python3 -c "import json; json.load(open('manifest.webmanifest')); print('✓ manifest.webmanifest')"

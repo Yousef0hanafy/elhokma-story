@@ -16,8 +16,11 @@
     timeouts: [],
     currentIndex: -1,
     isPlaying: false,
+    isPaused: false,
     isComplete: false,
     startTimestamp: 0,
+    pauseTimestamp: 0,
+    pausedRemaining: [], // {fn, delay} — pending timeouts saved on pause
     onSegmentCb: null,
     onCompleteCb: null,
     skipRequested: false,
@@ -28,11 +31,13 @@
   const $subtitleBar = () => document.getElementById('subtitle-bar');
   const $narratorOverlay = () => document.getElementById('narrator-overlay');
   const $replay = () => document.getElementById('replay-btn');
+  const $pause = () => document.getElementById('pause-btn');
   const $skip = () => document.getElementById('skip-btn');
 
   function init() {
     Narrator.reducedMotion = global.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if ($replay()) $replay().addEventListener('click', () => Narrator.replay());
+    if ($pause()) $pause().addEventListener('click', () => Narrator.togglePause());
     if ($skip()) $skip().addEventListener('click', () => Narrator.skip());
   }
 
@@ -59,9 +64,11 @@
     // Show subtitle bar
     $subtitleBar().classList.add('visible');
 
-    // Disable skip/replay appropriately
+    // Disable skip/replay appropriately; enable pause
     if ($replay()) $replay().disabled = true;
+    if ($pause()) { $pause().disabled = false; $pause().textContent = '⏸'; $pause().setAttribute('aria-label', 'إيقاف مؤقت'); }
     if ($skip()) $skip().disabled = false;
+    Narrator.isPaused = false;
 
     // Schedule each segment
     segments.forEach((seg, i) => {
@@ -83,6 +90,7 @@
       Narrator.isComplete = true;
       stopSpeaking();
       if ($replay()) $replay().disabled = false;
+      if ($pause()) $pause().disabled = true;
       if ($skip()) $skip().disabled = true;
       $subtitleBar().classList.add('controls-visible');
       if (Narrator.onCompleteCb) Narrator.onCompleteCb();
@@ -146,8 +154,10 @@
     if (!Narrator.isPlaying) return;
     Narrator.skipRequested = true;
     Narrator.isPlaying = false;
+    Narrator.isPaused = false;
     Narrator.isComplete = true;
     clearAllTimeouts();
+    Narrator.pausedRemaining = [];
     // Cancel any in-flight narration (provider-agnostic)
     if (global.NarrationManager) NarrationManager.cancel();
     else if (global.TTS) TTS.cancel();
@@ -163,6 +173,7 @@
     }
     stopSpeaking();
     if ($replay()) $replay().disabled = false;
+    if ($pause()) { $pause().disabled = true; $pause().textContent = '⏸'; }
     if ($skip()) $skip().disabled = true;
     $subtitleBar().classList.add('controls-visible');
     if (Narrator.onCompleteCb) Narrator.onCompleteCb();
@@ -177,6 +188,95 @@
       onComplete: Narrator.onCompleteCb,
       totalSeconds: Narrator.segments[Narrator.segments.length - 1].time + 3,
     });
+  }
+
+  // Pause/resume narration. When paused:
+  //   - All pending timeouts are cleared but their remaining delays are saved
+  //   - The typewriter effect freezes (its timeouts are in Narrator.timeouts)
+  //   - Audio narration is cancelled (we can't pause Web Speech API reliably)
+  //   - The narrator wave animation stops
+  // On resume:
+  //   - Saved timeouts are re-scheduled with their remaining delays
+  //   - Audio narration restarts for the current segment
+  // This gives learners control over pacing without losing their place.
+  function togglePause() {
+    if (!Narrator.isPlaying) return;
+
+    if (!Narrator.isPaused) {
+      // --- PAUSE ---
+      Narrator.isPaused = true;
+      Narrator.pauseTimestamp = Date.now();
+
+      // Save remaining delays for all pending timeouts, then clear them.
+      // We can't read the remaining delay of a setTimeout directly, so we
+      // calculate it from the segment timestamps vs. elapsed time.
+      const elapsed = (Narrator.pauseTimestamp - Narrator.startTimestamp) / 1000;
+      Narrator.pausedRemaining = [];
+      Narrator.segments.forEach((seg, i) => {
+        if (seg.time > elapsed && i > Narrator.currentIndex) {
+          Narrator.pausedRemaining.push({
+            segIdx: i,
+            delayMs: Math.max(0, (seg.time - elapsed) * 1000),
+          });
+        }
+      });
+      // Also save the completion timeout
+      const totalSec = Narrator.segments[Narrator.segments.length - 1].time + 3;
+      if (totalSec > elapsed) {
+        Narrator.pausedRemaining.push({
+          segIdx: -1, // sentinel for completion
+          delayMs: Math.max(0, (totalSec - elapsed) * 1000),
+        });
+      }
+      clearAllTimeouts();
+
+      // Cancel audio (Web Speech API doesn't pause reliably)
+      if (global.NarrationManager) NarrationManager.cancel();
+      else if (global.TTS) TTS.cancel();
+
+      // Update UI
+      stopSpeaking();
+      if ($pause()) { $pause().textContent = '▶'; $pause().setAttribute('aria-label', 'استئناف'); }
+    } else {
+      // --- RESUME ---
+      Narrator.isPaused = false;
+      Narrator.startTimestamp = Date.now() - (Narrator.pauseTimestamp - Narrator.startTimestamp);
+
+      // Re-schedule saved timeouts
+      Narrator.pausedRemaining.forEach(item => {
+        const t = setTimeout(() => {
+          if (Narrator.skipRequested) return;
+          if (item.segIdx === -1) {
+            // Completion
+            Narrator.isPlaying = false;
+            Narrator.isComplete = true;
+            stopSpeaking();
+            if ($replay()) $replay().disabled = false;
+            if ($pause()) $pause().disabled = true;
+            if ($skip()) $skip().disabled = true;
+            $subtitleBar().classList.add('controls-visible');
+            if (Narrator.onCompleteCb) Narrator.onCompleteCb();
+          } else {
+            const seg = Narrator.segments[item.segIdx];
+            Narrator.currentIndex = item.segIdx;
+            showSegment(seg, item.segIdx);
+            if (Narrator.onSegmentCb) Narrator.onSegmentCb(seg, item.segIdx);
+          }
+        }, item.delayMs);
+        Narrator.timeouts.push(t);
+      });
+      Narrator.pausedRemaining = [];
+
+      // Re-start audio for the current segment
+      if (Narrator.currentIndex >= 0 && Narrator.segments[Narrator.currentIndex]) {
+        const seg = Narrator.segments[Narrator.currentIndex];
+        if (global.NarrationManager) NarrationManager.speak(seg.text, Narrator.currentIndex);
+      }
+
+      // Update UI
+      startSpeaking();
+      if ($pause()) { $pause().textContent = '⏸'; $pause().setAttribute('aria-label', 'إيقاف مؤقت'); }
+    }
   }
 
   function showNarrator() {
@@ -212,6 +312,7 @@
   Narrator.start = start;
   Narrator.skip = skip;
   Narrator.replay = replay;
+  Narrator.togglePause = togglePause;
   Narrator.showNarrator = showNarrator;
   Narrator.hideNarrator = hideNarrator;
   Narrator.startSpeaking = startSpeaking;

@@ -361,8 +361,13 @@
         if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
         Narrator.skipRequested = true;
         state.currentScreen = idx;
-        // Reset per-scene state for the new scene so it plays fresh
-        resetCurrentSceneState();
+        // Only reset scene state if the scene is NOT completed. Returning to
+        // a completed scene should preserve exploration/answers so the learner
+        // can review their work — resetting would silently destroy progress.
+        // (Previously this always reset, which broke the review use case.)
+        if (!isSceneCompleted(idx)) {
+          resetCurrentSceneState();
+        }
         saveState();
         renderScene(idx);
       });
