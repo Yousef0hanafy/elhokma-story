@@ -456,102 +456,77 @@
   // ---------- Narration Controls ----------
   // These controls operate on NarrationManager (provider-agnostic). The UI
   // (mute, speed, activation) works identically whether the active provider
-  // is professional audio, browser TTS, or subtitle-only. The activation
-  // overlay still checks TTS availability because that's what determines
-  // whether audio narration is possible at all (AudioProvider requires
-  // activation too, but we don't know if audio files exist until playback).
+  // is professional audio, browser TTS, or subtitle-only. NarrationManager
+  // owns the persisted mute/speed settings, so the labels below always
+  // reflect what the learner will actually hear.
+  const RATES = [0.75, 1.0, 1.25, 1.5];
+  const RATE_LABELS = ['٠.٧٥×', '١×', '١.٢٥×', '١.٥×'];
+
   function bindTTSControls() {
+    const NM = window.NarrationManager;
+    if (!NM) return;
     const ttsToggle = document.getElementById('tts-toggle');
     const ttsRate = document.getElementById('tts-rate');
     const ttsIcon = document.getElementById('tts-icon');
     const ttsRateLabel = document.getElementById('tts-rate-label');
-
-    // Activation overlay buttons
     const activateBtn = document.getElementById('tts-activate-btn');
     const skipBtn = document.getElementById('tts-skip-btn');
 
-    // Use NarrationManager for state if available, fall back to TTS for
-    // backward compatibility (e.g., if NM failed to load).
-    const NM = window.NarrationManager;
-    if (!NM && !window.TTS) return;
-
-    // Update topbar narration button based on state
-    const onStateChange = (s) => {
-      if (!ttsToggle) return;
-      // Determine availability: NM checks all providers, TTS checks itself
-      const available = NM ? !!s.available : s.available;
-      const activated = NM ? s.activated : s.activated;
-      const muted = NM ? s.muted : s.muted;
-      const speaking = NM ? s.speaking : s.speaking;
-      ttsToggle.disabled = !available;
-      ttsToggle.classList.toggle('muted', muted || !available || !activated);
+    let lastAvailable = null;
+    NM.onStateChange((s) => {
+      const available = !!s.available;
+      // Voices load asynchronously: if the activation card is already open
+      // when a voice turns up (or turns out missing), refresh what it says.
+      const overlay = document.getElementById('tts-activation');
+      if (lastAvailable !== null && s.available !== lastAvailable && overlay && overlay.classList.contains('visible')) {
+        showTTSActivationOverlay();
+      }
+      lastAvailable = s.available;
+      if (ttsToggle) {
+        ttsToggle.classList.toggle('muted', s.muted || !available || !s.activated);
+        ttsToggle.setAttribute('aria-pressed', String(available && s.activated && !s.muted));
+      }
       if (ttsIcon) {
         if (!available) ttsIcon.textContent = '🔇';
-        else if (!activated) ttsIcon.textContent = '🔈';
-        else if (muted) ttsIcon.textContent = '🔈';
-        else if (speaking) ttsIcon.textContent = '🔊';
+        else if (!s.activated || s.muted) ttsIcon.textContent = '🔈';
         else ttsIcon.textContent = '🔊';
       }
-    };
+      const rateIdx = RATES.indexOf(s.rate);
+      if (ttsRateLabel) ttsRateLabel.textContent = RATE_LABELS[rateIdx >= 0 ? rateIdx : 1];
+    });
 
-    if (NM) NM.onStateChange(onStateChange);
-    else TTS.onStateChange(onStateChange);
-
-    // Topbar narration toggle — if not activated, show activation overlay; else mute/unmute
+    // Topbar narration toggle — explain if unavailable, offer activation if
+    // not yet activated, else mute/unmute.
     if (ttsToggle) {
       ttsToggle.addEventListener('click', () => {
-        const s = NM ? NM.getState() : TTS.getState();
-        const available = NM ? !!s.available : s.available;
-        if (!available) {
-          showTTSActivationOverlay('unavailable');
-          return;
-        }
-        if (!s.activated) {
-          showTTSActivationOverlay();
-          return;
-        }
-        // Toggle mute
-        if (NM) NM.setMuted(!s.muted);
-        else TTS.setMuted(!s.muted);
+        const s = NM.getState();
+        if (!s.available) { showTTSActivationOverlay('unavailable'); return; }
+        if (!s.activated) { showTTSActivationOverlay(); return; }
+        NM.setMuted(!s.muted);
         showToast(s.muted ? 'تم تفعيل السرد الصوتي' : 'تم كتم السرد الصوتي', 'success');
       });
     }
 
-    // Speed control
     if (ttsRate) {
-      const rates = [0.75, 1.0, 1.25, 1.5];
-      const rateLabels = ['٠.٧٥×', '١×', '١.٢٥×', '١.٥×'];
       ttsRate.addEventListener('click', () => {
-        const s = NM ? NM.getState() : TTS.getState();
-        const available = NM ? !!s.available : s.available;
-        if (!available) {
-          showToast('السرد الصوتي غير متاح', 'error');
-          return;
-        }
-        const currentIdx = rates.indexOf(s.rate);
-        const nextIdx = (currentIdx + 1) % rates.length;
-        if (NM) NM.setRate(rates[nextIdx]);
-        else TTS.setRate(rates[nextIdx]);
-        if (ttsRateLabel) ttsRateLabel.textContent = rateLabels[nextIdx];
-        showToast(`سرعة السرد: ${rateLabels[nextIdx]}`, 'success');
+        const s = NM.getState();
+        if (!s.available) { showToast('السرد الصوتي غير متاح', 'error'); return; }
+        const nextIdx = (RATES.indexOf(s.rate) + 1) % RATES.length;
+        NM.setRate(RATES[nextIdx]);
+        showToast(`سرعة السرد: ${RATE_LABELS[nextIdx]}`, 'success');
       });
     }
 
-    // Activation overlay handlers
     if (activateBtn) {
       activateBtn.addEventListener('click', () => {
-        const s = NM ? NM.getState() : TTS.getState();
-        const available = NM ? !!s.available : s.available;
-        if (!available) {
-          // No Arabic voice — proceed without audio (subtitles still work)
-          hideTTSActivationOverlay();
+        hideTTSActivationOverlay();
+        if (!NM.getState().available) {
           showToast('السرد الصوتي غير متاح، المتابعة بالترجمة النصية', 'warning');
           return;
         }
-        // Activate narration (this is the user gesture)
-        if (NM) NM.activate();
-        else TTS.activate();
-        hideTTSActivationOverlay();
+        // Activate narration (this click is the required user gesture)
+        NM.activate();
+        if (NM.getState().muted) NM.setMuted(false);
         showToast('تم تفعيل السرد الصوتي', 'success');
       });
     }
@@ -571,38 +546,32 @@
     const title = document.getElementById('tts-activation-title');
     const desc = document.getElementById('tts-activation-desc');
     const activateBtn = document.getElementById('tts-activate-btn');
-
     if (!overlay) return;
 
-    // Check narration availability via NarrationManager (or TTS fallback)
-    const NM = window.NarrationManager;
-    const s = NM ? NM.getState() : (window.TTS ? TTS.getState() : { available: false });
-    // For the overlay, "available" means at least one audio provider can work.
-    // TTS availability is the proxy — AudioProvider only works after activation.
-    const ttsState = window.TTS ? TTS.getState() : { available: false };
-    const hasAudio = NM ? !!s.available : ttsState.available;
+    const s = window.NarrationManager ? NarrationManager.getState() : { available: null };
+    const ttsState = window.TTS ? TTS.getState() : {};
 
-    if (mode === 'unavailable' || !hasAudio) {
-      // No Arabic voice available — subtitles still work
+    if (mode === 'unavailable' || !s.available) {
+      // No recorded audio and no Arabic voice on this device: subtitles only.
       title.textContent = 'السرد الصوتي غير متاح';
       desc.textContent = 'متصفحك لا يدعم السرد الصوتي العربي. ستظهر الترجمة النصية تلقائياً. يمكنك المتابعة دون صوت.';
-      if (activateBtn) activateBtn.style.display = 'none';
-      if (status) {
-        status.textContent = 'يمكنك المتابعة بالنقر على الزر أدناه';
-        status.className = 'tts-activation-status';
-      }
+      if (activateBtn) activateBtn.hidden = true;
+      if (status) status.textContent = 'يمكنك المتابعة بالنقر على الزر أدناه';
     } else {
       title.textContent = 'السرد الصوتي العربي';
       desc.textContent = 'لتجربة كاملة مع صوت د. سارة، فعّل السرد الصوتي. يمكنك أيضاً المتابعة بالترجمة النصية فقط.';
-      if (activateBtn) activateBtn.style.display = '';
+      if (activateBtn) activateBtn.hidden = false;
       if (status) {
-        status.textContent = `الصوت المتاح: ${ttsState.voiceName || 'عربي'} (${ttsState.voiceLang || 'ar'})`;
-        status.className = 'tts-activation-status';
+        status.textContent = s.available === 'audio'
+          ? 'سرد صوتي مسجّل'
+          : `الصوت المتاح: ${ttsState.voiceName || 'عربي'} (${ttsState.voiceLang || 'ar'})`;
       }
     }
 
     overlay.classList.add('visible');
     overlay.inert = false;
+    const focusTarget = activateBtn && !activateBtn.hidden ? activateBtn : document.getElementById('tts-skip-btn');
+    if (focusTarget) focusTarget.focus();
   }
 
   function hideTTSActivationOverlay() {
@@ -805,7 +774,7 @@
     else if (window.TTS) TTS.cancel();
     // Tell NarrationManager which scene we're in (for audio manifest lookup)
     if (window.NarrationManager) NarrationManager.setContext(scene.id);
-    Narrator.skipRequested = true;
+    Narrator.stop();
     Animator.clear();
 
     // Update topbar
@@ -2444,7 +2413,7 @@
 
     // Cancel any in-flight narration
     if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
-    Narrator.skipRequested = true;
+    Narrator.stop();
     Narrator.hideNarrator();
     Animator.clear();
 

@@ -22,7 +22,7 @@
   <meta property="og:locale" content="ar_AR">
   <meta property="og:title" content="رحلة الحوكمة — تعلّم سينمائي تفاعلي">
   <meta property="og:description" content="تجربة تعلّم سينمائية تفاعلية بالعربية الفصحى عن الحوكمة في القطاع الصحي. سبعة مشاهد سردية مع سرد صوتي عربي وتوافق SCORM 1.2.">
-  <meta property="og:image" content="preview/01_scene1_cover.png">
+  <meta property="og:image" content="https://yousef0hanafy.github.io/elhokma-story/preview/01_scene1_cover.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="رحلة الحوكمة — تعلّم سينمائي تفاعلي">
   <meta name="twitter:description" content="تجربة تعلّم سينمائية تفاعلية بالعربية الفصحى عن الحوكمة في القطاع الصحي.">
@@ -35,13 +35,9 @@
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="application-name" content="رحلة الحوكمة">
 
-  <!-- Fonts: preconnect warms TLS; the stylesheet itself is loaded
-       asynchronously by app.js (createElement('link')) to avoid blocking
-       first paint and to comply with the CSP (no inline onload handler).
-       CSS has system-font fallbacks so the page is usable immediately. -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-
+  <!-- Fonts are self-hosted (css/fonts.css) so the package is complete
+       offline and inside locked-down LMS networks. -->
+  <link rel="stylesheet" href="css/fonts.css">
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/animations.css">
   <link rel="stylesheet" href="css/scenes.css">
@@ -49,13 +45,13 @@
   <!-- Content Security Policy: restricts script/style/font/image sources
        to defend against XSS even if a content injection slips through.
        - script-src 'self': no inline scripts, no eval, no CDN scripts
-       - style-src 'self' 'unsafe-inline' https://fonts.googleapis.com:
-         inline styles (used by JS for transitions) + Google Fonts stylesheet
-       - font-src 'self' https://fonts.gstatic.com: Google Fonts file delivery
+       - style-src 'self' 'unsafe-inline': inline styles (used by JS for
+         transitions and SVG animation delays)
+       - font-src 'self': self-hosted fonts only
        - img-src 'self' data: inline SVG/data URIs
        - connect-src 'self': no external API calls
        - base-uri 'none', form-action 'none', object-src 'none': hardening -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 </head>
 <body>
 

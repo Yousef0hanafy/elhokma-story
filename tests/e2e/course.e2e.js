@@ -14,12 +14,46 @@ const { installMockLms } = require('./mock-lms');
 
 let server, baseUrl, browser;
 
-async function newPage({ lms = true, reducedMotion = true } = {}) {
+// A fake Arabic Web Speech voice whose every utterance takes `durationMs`.
+// Logs start / end / cancel with timestamps to window.__speech.
+function installFakeSpeech(durationMs) {
+  const log = [];
+  window.__speech = log;
+  let timers = [];
+  let queue = [];
+  function next() {
+    const u = queue.shift();
+    if (!u) return;
+    log.push({ type: 'start', text: u.text, t: Date.now() });
+    timers.push(setTimeout(() => {
+      log.push({ type: 'end', text: u.text, t: Date.now() });
+      if (u.onend) u.onend({});
+      next();
+    }, durationMs));
+  }
+  window.SpeechSynthesisUtterance = function (text) { this.text = text; };
+  const synth = {
+    getVoices: () => [{ name: 'Test Arabic', lang: 'ar-SA' }],
+    speak(u) { queue.push(u); if (queue.length === 1 && !synth._busy) { synth._busy = true; next(); } },
+    cancel() {
+      if (timers.length || queue.length) log.push({ type: 'cancel', t: Date.now() });
+      timers.forEach(clearTimeout); timers = []; queue = []; synth._busy = false;
+    },
+    onvoiceschanged: null,
+  };
+  // Re-arm "busy" when the queue drains.
+  const origNext = next;
+  next = function () { if (!queue.length) { synth._busy = false; } origNext(); };
+  Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true });
+}
+
+async function newPage({ lms = true, reducedMotion = true, speechMs = 0 } = {}) {
   const context = await browser.newContext({ reducedMotion: reducedMotion ? 'reduce' : 'no-preference' });
   // Block third-party requests: the course must work fully offline / inside
   // a locked-down hospital network.
   await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, route => route.abort());
   if (lms) await context.addInitScript(installMockLms);
+  if (speechMs) await context.addInitScript(installFakeSpeech, speechMs);
   const page = await context.newPage();
   page.errors = [];
   page.on('pageerror', e => page.errors.push('PageError: ' + e.message));
@@ -310,6 +344,63 @@ test('Standalone (no LMS): loads, saves progress to localStorage', async () => {
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('scorm_gov_story_v1') || '{}')['cmi.suspend_data']);
   assert(saved && JSON.parse(saved).currentScreen === 1, 'progress saved locally');
   assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('Fonts are self-hosted and load; no service worker inside an LMS', async () => {
+  const page = await newPage();
+  await open(page);
+  await page.evaluate(() => document.fonts.ready);
+  assert(await page.evaluate(() => document.fonts.check('700 16px Tajawal', 'رحلة')), 'Tajawal loaded');
+  assertEqual(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), 0, 'no SW registered in LMS mode');
+  await page.context().close();
+});
+
+test('Without an Arabic voice, the audio card says so instead of pretending', async () => {
+  const page = await newPage();
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
+  await page.waitForTimeout(5500); // TTS polls for voices for up to 5s
+  assert(await page.evaluate(() => document.getElementById('tts-activate-btn').hidden), 'activate button hidden');
+  assert((await page.textContent('#tts-activation-title')).includes('غير متاح'), 'card says audio unavailable');
+  await page.context().close();
+});
+
+test('Narration waits for each sentence to finish; pause/resume replays it', async () => {
+  const page = await newPage({ reducedMotion: true, speechMs: 5000 });
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
+  await page.waitForFunction(() => !document.getElementById('tts-activate-btn').hidden);
+  await page.click('#tts-activate-btn');
+  await page.waitForFunction(() => window.__speech.filter(e => e.type === 'start').length >= 2, null, { timeout: 15000 });
+  const log = await page.evaluate(() => window.__speech);
+  const starts = log.filter(e => e.type === 'start');
+  const firstEnd = log.find(e => e.type === 'end');
+  assert(firstEnd && starts[1].t >= firstEnd.t, 'second sentence started only after the first finished');
+  assert(!log.some(e => e.type === 'cancel' && e.t < firstEnd.t), 'first sentence was not cut off');
+
+  await page.click('#pause-btn');
+  await page.click('#pause-btn');
+  await page.waitForFunction(() => window.__speech.filter(e => e.type === 'start').length >= 3);
+  const after = await page.evaluate(() => window.__speech.filter(e => e.type === 'start'));
+  assertEqual(after[2].text, after[1].text, 'resume replays the current sentence');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('Mute and speed survive a reload, and the topbar shows them', async () => {
+  const page = await newPage({ speechMs: 1000 });
+  await open(page);
+  await page.waitForFunction(() => !document.getElementById('tts-activate-btn').hidden);
+  await page.click('#tts-activate-btn');
+  await page.click('#tts-rate');            // 1× → 1.25×
+  await page.click('#tts-toggle');          // mute
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => document.getElementById('loader').classList.contains('hidden'));
+  const st = await page.evaluate(() => window.NarrationManager.getState());
+  assertEqual(st.muted, true, 'muted persisted');
+  assertEqual(st.rate, 1.25, 'rate persisted');
+  assertEqual(await page.textContent('#tts-rate-label'), '١.٢٥×', 'rate label matches');
   await page.context().close();
 });
 

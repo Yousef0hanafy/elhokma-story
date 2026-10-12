@@ -31,7 +31,7 @@
     return !!(global.TTS && TTS.isEnabled && TTS.isEnabled());
   }
 
-  function speak(text, audioUrl) {
+  function speak(text) {
     // audioUrl is ignored — TTS uses the text
     if (!global.TTS || !TTS.speak) return false;
     return TTS.speak(text);

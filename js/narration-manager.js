@@ -36,6 +36,10 @@
  *   NarrationManager.getState()               // { provider, available, muted, speaking, rate }
  *   NarrationManager.onStateChange(cb)        // subscribe to state changes
  *
+ * Settings: NarrationManager is the single owner of the learner's mute and
+ * speed preferences. It persists them and pushes them to every provider,
+ * so the topbar icon, the speed label and the actual audio always agree.
+ *
  * Subtitles are ALWAYS shown by the Narrator engine (typewriter effect).
  * NarrationManager only controls audio. This guarantees the product is
  * usable by deaf/hard-of-hearing learners and in silent environments.
@@ -55,11 +59,43 @@
     currentSegmentId: null,
   };
 
+  // ---------- Persisted learner settings ----------
+  const LS_KEY = 'narration_settings_v1';
+  const LEGACY_KEY = 'tts_settings_v1'; // written by older versions (tts.js)
+  const RATES = [0.75, 1.0, 1.25, 1.5];
+
+  function loadSettings() {
+    try {
+      const raw = localStorage.getItem(LS_KEY) || localStorage.getItem(LEGACY_KEY) || '{}';
+      const s = JSON.parse(raw);
+      NarrationManager.muted = !!s.muted;
+      NarrationManager.rate = RATES.includes(s.rate) ? s.rate : 1.0;
+    } catch (e) { /* private mode / corrupt — keep defaults */ }
+  }
+
+  function saveSettings() {
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({ muted: NarrationManager.muted, rate: NarrationManager.rate }));
+    } catch (e) { /* best-effort */ }
+  }
+
+  function applySettingsToProviders() {
+    NarrationManager.providers.forEach(p => {
+      try {
+        if (p.setMuted) p.setMuted(NarrationManager.muted);
+        if (p.setRate) p.setRate(NarrationManager.rate);
+      } catch (e) { /* a provider without settings support */ }
+    });
+  }
+
   // ---------- Provider interface ----------
   // Each provider implements:
   //   init()                          — one-time setup
   //   isAvailable()                   — can this provider narrate right now?
-  //   speak(text, audioUrl)           — start narrating; returns true if started
+  //   speak(text, audioUrl, onFail)   — start narrating; returns true if started.
+  //                                     Calls onFail() if playback fails later
+  //                                     (e.g. a 404 audio file), so we can fall
+  //                                     back to the next provider.
   //   cancel()                        — stop immediately
   //   setMuted(bool)                  — mute/unmute
   //   setRate(float)                  — set playback speed
@@ -90,11 +126,18 @@
   // AudioProvider.isAvailable() returns false and we fall back to TTS.
   function init(manifest) {
     NarrationManager.manifest = manifest || {};
+    loadSettings();
     // Initialize all providers
     NarrationManager.providers.forEach(p => {
-      try { if (p.init) p.init(); } catch (e) { console.warn('[NarrationManager] provider init failed:', p.getName?.(), e); }
+      try { if (p.init) p.init(); } catch (e) { console.warn('[NarrationManager] provider init failed:', p.getName && p.getName(), e); }
     });
+    applySettingsToProviders();
     notifyStateChange();
+  }
+
+  function hasAudioManifest() {
+    const m = NarrationManager.manifest;
+    return !!m && Object.keys(m).some(k => m[k] && Object.keys(m[k]).length > 0);
   }
 
   function setContext(sceneId) {
@@ -136,33 +179,43 @@
     // If not activated, no audio plays (subtitles still show via Narrator).
     // This is correct browser behavior — we can't bypass autoplay policies.
     if (!NarrationManager.activated) return false;
+    return speakFrom(0, text, segmentId);
+  }
 
-    // Find the first available provider
-    for (const provider of NarrationManager.providers) {
+  // Try providers in priority order starting at index `from`. If a provider
+  // starts but fails later (onFail), fall through to the next one for the
+  // same segment — unless the learner has already moved on.
+  function speakFrom(from, text, segmentId) {
+    const providers = NarrationManager.providers;
+    for (let i = from; i < providers.length; i++) {
+      const provider = providers[i];
       if (!provider.isAvailable()) continue;
 
-      const audioUrl = (provider.getName() === 'audio')
-        ? getAudioUrl(segmentId)
-        : null;
-
+      const isAudio = provider.getName() === 'audio';
+      const audioUrl = isAudio ? getAudioUrl(segmentId) : null;
       // AudioProvider needs a URL; if no URL for this segment, skip to TTS
-      if (provider.getName() === 'audio' && !audioUrl) continue;
+      if (isAudio && !audioUrl) continue;
+
+      const onFail = () => {
+        if (NarrationManager.currentSegmentId !== segmentId || NarrationManager.activeProvider !== provider) return;
+        console.warn('[NarrationManager] provider failed, falling back:', provider.getName());
+        speakFrom(i + 1, text, segmentId);
+      };
 
       try {
-        const started = provider.speak(text, audioUrl);
-        if (started) {
+        if (provider.speak(text, audioUrl, onFail)) {
           NarrationManager.activeProvider = provider;
           notifyStateChange();
           return true;
         }
       } catch (e) {
-        console.warn('[NarrationManager] provider failed, falling back:', provider.getName?.(), e);
-        // Fall through to next provider
+        console.warn('[NarrationManager] provider failed, falling back:', provider.getName(), e);
       }
     }
 
     // No provider could narrate — subtitle-only mode (subtitles still work)
     NarrationManager.activeProvider = null;
+    notifyStateChange();
     return false;
   }
 
@@ -178,17 +231,15 @@
   function setMuted(m) {
     NarrationManager.muted = !!m;
     if (NarrationManager.muted) cancel();
-    NarrationManager.providers.forEach(p => {
-      try { if (p.setMuted) p.setMuted(NarrationManager.muted); } catch (e) {}
-    });
+    applySettingsToProviders();
+    saveSettings();
     notifyStateChange();
   }
 
   function setRate(r) {
     NarrationManager.rate = Math.max(0.5, Math.min(2.0, r));
-    NarrationManager.providers.forEach(p => {
-      try { if (p.setRate) p.setRate(NarrationManager.rate); } catch (e) {}
-    });
+    applySettingsToProviders();
+    saveSettings();
     notifyStateChange();
   }
 
@@ -203,12 +254,18 @@
     return NarrationManager.activeProvider ? NarrationManager.activeProvider.getName() : null;
   }
 
+  // Which kind of audio narration this device can produce at all, BEFORE
+  // the learner activates audio: recorded files if the manifest has any,
+  // else an installed Arabic TTS voice, else none (subtitles only). The
+  // activation overlay uses this to tell the truth about audio.
+  function getAvailableProvider() {
+    if (hasAudioManifest() && global.AudioProvider && AudioProvider.isAvailable()) return 'audio';
+    if (global.TTS && TTS.getState().available) return 'tts';
+    return null;
+  }
+
   function getState() {
-    // Determine the "available" provider for UI display
-    let availableProvider = null;
-    for (const p of NarrationManager.providers) {
-      if (p.isAvailable && p.isAvailable()) { availableProvider = p.getName(); break; }
-    }
+    const availableProvider = getAvailableProvider();
     return {
       provider: getActiveProviderName(),
       available: availableProvider,
@@ -216,7 +273,7 @@
       muted: NarrationManager.muted,
       speaking: isSpeaking(),
       rate: NarrationManager.rate,
-      hasAudioManifest: !!(NarrationManager.manifest && Object.keys(NarrationManager.manifest).length > 0),
+      hasAudioManifest: hasAudioManifest(),
     };
   }
 
