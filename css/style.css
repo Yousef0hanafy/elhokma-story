@@ -704,6 +704,16 @@ body.cinematic .letterbox { height: 56px; }
 .seat-modal-close:hover { transform: scale(1.02); }
 .seat-modal-close:active { transform: scale(0.98); }
 
+/* Confirm dialog (built by confirmDialog() in app.js) */
+.confirm-card { max-width: 420px; text-align: center; }
+.confirm-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+.confirm-actions .completion-secondary { min-height: 44px; border-radius: 12px; }
+
 /* ---------- Assessment panel ---------- */
 .assessment-panel {
   width: 100%;

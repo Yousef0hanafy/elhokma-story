@@ -39,12 +39,14 @@ package with `imsmanifest.xml` at the root.
 
 | SCORM field | Value |
 |-------------|-------|
-| `cmi.core.lesson_status` | `not attempted` → `incomplete` → `completed` / `passed` |
-| `cmi.core.score.raw` | 0–100 (progressive: each scene = 100/7 ≈ 14%) |
+| `cmi.core.lesson_status` | `incomplete` on first launch → `passed` / `failed` on finishing (never downgraded) |
+| `cmi.core.score.raw` | 0–100. Six scored scenes, 100/6 each; the dilemma gives partial credit. First attempt counts (`scoring_policy` in `content.js`). |
 | `cmi.core.score.min` | 0 |
 | `cmi.core.score.max` | 100 |
 | `cmi.core.session_time` | HH:MM:SS (updated every 60s + on unload) |
-| `cmi.suspend_data` | JSON: currentScreen, sceneScores, sceneState |
+| `cmi.suspend_data` | JSON: currentScreen, sceneScores, sceneState, completion record (≤ 4096 chars) |
+| `cmi.core.lesson_location` | `scene-N` bookmark |
+| `cmi.core.exit` | `suspend` while in progress (so the LMS keeps suspend_data), `''` once finished |
 | `cmi.core.student_name` | Read from LMS (displayed on completion screen) |
 
 **Mastery score**: 70 (configured in `imsmanifest.xml`). The LMS will mark
@@ -75,13 +77,15 @@ internal training without an LMS).
    manifest.webmanifest
    sw.js
    css/
+   fonts/
    js/
    ```
 2. Ensure the server sets correct MIME types:
    - `.webmanifest` → `application/manifest+json`
    - `.svg` → `image/svg+xml`
    - `.js` → `application/javascript` (NOT `text/javascript` on some servers)
-3. The service worker (`sw.js`) enables offline use after first load.
+3. The service worker (`sw.js`) enables offline use after first load. It is
+   registered only in standalone mode, never inside an LMS.
 4. Progress is saved to `localStorage` (per-browser, per-origin).
 
 ### Browser compatibility
@@ -99,8 +103,8 @@ internal training without an LMS).
 - Arabic TTS requires an Arabic voice installed on the system. Most desktop
   browsers do not include one by default. The module gracefully falls back
   to subtitle-only mode if no Arabic voice is available.
-- Service Worker is disabled in some SCORM sandbox iframes. The module
-  detects this and continues without offline caching.
+- The module does not impose a time limit. If your organisation needs one,
+  configure it in the LMS, not in the package.
 
 ---
 
@@ -116,7 +120,8 @@ Before going live, verify:
 - [ ] Completion screen appears after the last scene
 - [ ] Print certificate produces a readable PDF/printout
 - [ ] Reloading mid-course resumes at the correct scene
-- [ ] Alt+ArrowLeft / Alt+ArrowRight keyboard navigation works
+- [ ] Alt+ArrowLeft (next) / Alt+ArrowRight (previous) work, and cannot skip an unfinished scene
+- [ ] Closing mid-course and relaunching resumes at the same scene (LMS kept suspend_data)
 - [ ] No JavaScript errors in the browser console (except expected TTS "no Arabic voice" info)
 
 ---

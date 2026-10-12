@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] — 2026-10-12
+
+### Fixed (critical)
+- A perfect run now scores 100 (the opening scene no longer counts in the denominator).
+- Alt+Arrow shortcuts can no longer skip an unfinished scene; every navigation goes through one gate.
+- `cmi.core.exit` is `suspend` while in progress, so LMSs keep progress for resume; `lesson_location` is set.
+- Completion date and score are recorded once, on finishing; reviewing or reopening no longer re-stamps them.
+- Review mode no longer leaks into new scenes; resuming an answered scene always offers a way forward.
+- Timers from a scene the learner left can no longer fire.
+- `lesson_status` is never downgraded (e.g. restarting after passing).
+- LMS errors from `LMSSetValue`/`LMSCommit` are now checked and logged.
+
+### Changed
+- Scoring policy: first attempt counts (`scoring_policy` in `content.js`; `best_attempt` is available).
+- Correct answers are no longer always in the same position.
+- Restart uses an in-page confirm dialog instead of the browser's `confirm()`.
+- Keyboard: Alt+← = next, Alt+→ = previous (RTL).
+- Narration waits for each sentence to finish; pause/resume replays the current sentence; mute and speed persist; the audio card says clearly when no Arabic voice exists.
+- Fonts are self-hosted (no Google requests); CSP `font-src 'self'`.
+- The service worker registers only in standalone mode, not inside an LMS.
+- Removed the 2-hour forced exit from `imsmanifest.xml`; `masteryscore` moved to the schema-correct position.
+- Modals and drawers use `inert` for accessibility.
+
+### Added
+- ESLint, html-validate, file-list consistency check.
+- End-to-end tests against a strict mock SCORM 1.2 LMS; CI builds the SCORM ZIP.
+
 ## [1.0.0] — 2025-07-23
 
 ### Version 1.0 Release

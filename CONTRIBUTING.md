@@ -49,13 +49,39 @@ Types: `Critical`, `High`, `Medium`, `Low`, `Fix`, `Add`, `Refactor`, `Docs`, `C
 
 ## Testing
 
-There is no automated test suite yet. Before submitting a PR:
+Run everything CI runs before opening a PR (Node 22+):
 
-1. Walk through all 7 scenes in `?dev=1` mode.
-2. Verify SCORM suspend_data saves and restores (reload the page mid-scene).
-3. Test keyboard-only navigation (Tab, Enter, Escape).
-4. Test with `prefers-reduced-motion: reduce` (devtools → rendering).
-5. Test on mobile viewport (390px wide).
+```bash
+npm ci
+npm test            # lint + unit + end-to-end
+```
+
+- `npm run lint` runs ESLint, html-validate, and `check:files` (every file the
+  page loads must be listed in `imsmanifest.xml`, `scripts/build-scorm.sh`
+  and the `sw.js` app shell).
+- `npm run test:unit` runs the pure-logic tests in `tests/*.test.js`.
+- `npm run test:e2e` drives the whole course in Chromium against a strict
+  mock SCORM 1.2 LMS (`tests/e2e/mock-lms.js`). Set
+  `PLAYWRIGHT_CHROMIUM_PATH` to use a local Chromium, or run
+  `npx playwright install chromium` once.
+
+Still worth a manual pass for UI changes: keyboard-only navigation, reduced
+motion, and a 390px-wide mobile viewport.
+
+## Rules that keep the course correct
+
+- **Navigate only through `goToScene(idx, opts)`.** It enforces gating
+  (a scene unlocks when the previous one is completed) and review mode.
+  Never call `renderScene()` directly from UI code.
+- **Schedule scene timers with `later(ms, fn)`** (i.e. `Animator.delay`),
+  never raw `setTimeout`. `renderScene()` cancels them, so a callback from
+  a scene the learner already left can never fire.
+- **`finishCourse()` records completion; `showCompletionScreen()` only
+  displays it.** Displaying the completion screen must never re-stamp the
+  date or score.
+- **Scoring follows `CONTENT.course.scoring_policy`** (`first_attempt` by
+  default). Retries are for learning; they do not change the recorded score.
+- Keyboard shortcuts are RTL-aware: **Alt+← = next, Alt+→ = previous**.
 
 ## Reporting security issues
 
