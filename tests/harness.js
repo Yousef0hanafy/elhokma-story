@@ -115,17 +115,15 @@ function loadModule(filePath, options = {}) {
     win.STORY_CONTENT = options.content;
   }
 
-  // Pre-populate __APP_STATE__ if provided (for Version module)
-  if (options.appState) {
-    global.__APP_STATE__ = options.appState;
-    win.__APP_STATE__ = options.appState;
-  }
 
   // Read and execute the script in the global scope
   const code = fs.readFileSync(path.resolve(filePath), 'utf-8');
   // Use Function to evaluate in a scope where `window` refers to our mock
-  const fn = new Function('window', 'document', 'localStorage', 'navigator', 'matchMedia', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'location', 'URLSearchParams', 'addEventListener', 'removeEventListener', 'STORY_CONTENT', '__APP_STATE__', 'console', code);
-  fn(win, win.document, win.localStorage, win.navigator, win.matchMedia, win.setTimeout, win.clearTimeout, win.setInterval, win.clearInterval, win.requestAnimationFrame, win.location, win.URLSearchParams, win.addEventListener, win.removeEventListener, options.content, options.appState, console);
+  const fn = new Function('window', 'document', 'localStorage', 'navigator', 'matchMedia', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'location', 'URLSearchParams', 'addEventListener', 'removeEventListener', 'STORY_CONTENT', 'console', code);
+  fn(win, win.document, win.localStorage, win.navigator, win.matchMedia, win.setTimeout, win.clearTimeout, win.setInterval, win.clearInterval, win.requestAnimationFrame, win.location, win.URLSearchParams, win.addEventListener, win.removeEventListener, options.content, console);
+
+  // Bind the app state the Version module reads (app.js does this at boot).
+  if (options.appState && win.Version) win.Version.bind(options.appState);
 
   return win;
 }

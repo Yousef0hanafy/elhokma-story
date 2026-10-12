@@ -15,21 +15,16 @@
   // ---------- State ----------
   const state = {
     currentScreen: 0, // index into CONTENT.screens
-    exploredSeats: [], // seat numbers explored on screen 2 (legacy, synced from sceneState[1])
-    assessmentAnswer: null, // index of selected answer (current scene) (legacy)
-    assessmentAnswered: false, // (legacy)
-    narrationCompleted: false, // (legacy)
-    seatsRevealed: false, // (legacy)
     sceneScores: {}, // {screenIndex: 1 or 0 or fraction}
     sceneState: {}, // {screenIndex: {explored: [], answered: bool, ...}}
     completion: null, // {version, date, score} — stamped on course completion
     reviewMode: false, // true when revisiting completed scenes (non-scoring)
+    bookmark: 0, // the learner's real position while reviewMode is on
   };
 
-  // Expose state for the Version module (which stamps completion records).
-  // Using a global reference rather than passing state around keeps the
-  // module boundary clean while avoiding circular dependencies.
-  window.__APP_STATE__ = state;
+  // The Version module stamps completion records onto this state object.
+  // It gets a private reference (no window global the learner could edit).
+  if (window.Version) Version.bind(state);
 
   const $stage = () => document.getElementById('stage');
   const $ctaZone = () => document.getElementById('cta-zone');
@@ -39,36 +34,36 @@
   const $toast = () => document.getElementById('toast');
   const $narratorAvatar = () => document.getElementById('narrator-avatar');
 
-  // ---------- Fonts & Service Worker (CSP-compliant async loading) ----------
-
-  // Load Google Fonts via JS to avoid inline onload handlers (CSP script-src 'self').
-  // The link is created with rel=stylesheet but media=print so it downloads without
-  // blocking render; once loaded, media swaps to 'all' to apply the fonts.
-  function loadFontsAsync() {
-    const href = 'https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap';
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = href;
-    link.media = 'print'; // download without blocking render
-    link.onload = function () { link.media = 'all'; };
-    document.head.appendChild(link);
-  }
-
+  // ---------- Service Worker ----------
+  // Offline support is for the standalone (GitHub Pages / intranet) build
+  // only. Inside an LMS the course runs on the LMS's origin, where a service
+  // worker would cache LMS pages and outlive package updates, so it is never
+  // registered there. Fonts are self-hosted (css/fonts.css), so the course
+  // makes no third-party requests in either mode.
   function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
-    // Delay registration until after load so it never competes with first paint.
-    window.addEventListener('load', function () {
-      navigator.serviceWorker.register('sw.js').catch(function (e) {
-        console.info('[SW] registration failed (expected in SCORM sandbox):', e);
-      });
-      // If a new SW takes over, prompt the user to refresh so they get the
-      // latest code immediately rather than running stale JS for this session.
-      navigator.serviceWorker.addEventListener('message', function (event) {
-        if (event.data && event.data.type === 'SW_UPDATED') {
-          showToast('تم تحديث التطبيق — أعد التحميل للحصول على أحدث نسخة', 'success');
-        }
-      });
+    if (!window.ScormApi.isStandalone()) return;
+    // A controller already present means this visit runs a previously
+    // installed version, so an activation message really is an update.
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('message', function (event) {
+      if (hadController && event.data && event.data.type === 'SW_UPDATED') {
+        showToast('تم تحديث التطبيق — أعد التحميل للحصول على أحدث نسخة', 'success');
+      }
     });
+    // Delay registration until after load so it never competes with first paint.
+    const register = function () {
+      navigator.serviceWorker.register('sw.js').catch(function (e) {
+        console.info('[SW] registration failed:', e);
+      });
+    };
+    if (document.readyState === 'complete') register();
+    else window.addEventListener('load', register);
+  }
+
+  // Scenes that carry an assessment. Only these count toward the score.
+  function scoredSceneCount() {
+    return CONTENT.screens.filter(s => s.assessment || s.phases).length;
   }
 
   // ---------- Init ----------
@@ -81,19 +76,13 @@
     const isDev = urlParams.get('dev') === '1' || urlParams.get('dev') === 'true';
     if (isDev) document.body.classList.add('dev-mode');
 
-    // Load Google Fonts asynchronously (CSP-compliant: no inline onload).
-    // The CSS has system-font fallbacks so the page is usable immediately.
-    loadFontsAsync();
-
-    // Register service worker for offline support. In SCORM sandboxed
-    // iframes, registration may fail — that's fine, the page works without it.
-    registerServiceWorker();
-
     window.ScormApi.init();
+    // Service worker only after we know whether an LMS is present.
+    registerServiceWorker();
     loadState();
     // Initialize the scoring module with the app's sceneScores ref so
     // scores persist via the existing suspend_data mechanism.
-    if (window.Scoring) Scoring.init(state.sceneScores, CONTENT.screens.length);
+    Scoring.init(state.sceneScores, scoredSceneCount(), CONTENT.course.scoring_policy);
     Narrator.init();
     Animator.init();
     if (window.TTS) TTS.init();
@@ -115,20 +104,35 @@
     bindTTSControls();
     bindLearningHub();
 
-    // Hide loader after 1.2s (let fonts load)
-    setTimeout(() => {
-      $loader().classList.add('hidden');
-      // Mark lesson in-progress
-      if (window.ScormApi.getStatus() === 'not attempted') {
-        window.ScormApi.setStatus('incomplete');
-      }
-      // Start first scene
-      renderScene(state.currentScreen);
-      // Show TTS activation overlay after first scene renders (only if starting fresh)
-      if (state.currentScreen === 0) {
-        maybeShowTTSActivation();
-      }
-    }, 1400);
+    // Mark the lesson in progress, and ask the LMS to keep our progress
+    // (suspend_data) for the next launch until the course is finished.
+    if (window.ScormApi.getStatus() === 'not attempted') {
+      window.ScormApi.setStatus('incomplete');
+    }
+    if (!window.ScormApi.isFinished()) window.ScormApi.setExit('suspend');
+
+    // Hide the loader once fonts are ready, but never wait more than 1.2s
+    // (system fonts are an acceptable fallback) and keep it up at least
+    // briefly so it does not flash.
+    const fontsReady = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    const minShown = new Promise(r => setTimeout(r, 300));
+    const maxWait = new Promise(r => setTimeout(r, 1200));
+    Promise.race([Promise.all([fontsReady, minShown]), maxWait]).then(start);
+  }
+
+  function start() {
+    $loader().classList.add('hidden');
+    // A learner who already finished lands on their result, not on the
+    // last scene with no way to see it.
+    if (state.completion && window.ScormApi.isFinished()) {
+      showCompletionScreen();
+      return;
+    }
+    renderScene(state.currentScreen);
+    // Show TTS activation overlay after first scene renders (only if starting fresh)
+    if (state.currentScreen === 0) {
+      maybeShowTTSActivation();
+    }
   }
 
   function loadState() {
@@ -194,9 +198,12 @@
         state.sceneState[idx] = {};
         return;
       }
-      if (scene.id === 'dilemma') {
+      if (scene.id === 'opening') {
+        if (typeof ss.completed !== 'boolean') ss.completed = false;
+      } else if (scene.id === 'dilemma') {
         if (!ss.phaseAnswers || typeof ss.phaseAnswers !== 'object') ss.phaseAnswers = {};
         if (!ss.phaseCorrect || typeof ss.phaseCorrect !== 'object') ss.phaseCorrect = {};
+        if (!ss.phaseFirst || typeof ss.phaseFirst !== 'object') ss.phaseFirst = {};
         if (typeof ss.currentPhase !== 'number') ss.currentPhase = 1;
         if (typeof ss.completed !== 'boolean') ss.completed = false;
       } else if (scene.id === 'court') {
@@ -213,27 +220,18 @@
   }
 
   function saveState() {
-    // Sync boardroom state back to legacy fields for backward compatibility
-    // (older versions of the app read state.exploredSeats etc. directly).
-    const ss1 = state.sceneState[1] || {};
-    state.exploredSeats = ss1.explored || [];
-    state.assessmentAnswer = ss1.answer !== undefined ? ss1.answer : null;
-    state.assessmentAnswered = !!ss1.answered;
-    state.narrationCompleted = !!ss1.narrationCompleted;
-
+    // Legacy top-level boardroom fields (exploredSeats, assessmentAnswer, …)
+    // are still READ by loadState() to migrate old saves, but no longer
+    // written: every scene now lives in sceneState[idx]. Review-mode visits
+    // never move the learner's bookmark.
     window.ScormApi.setSuspendData({
-      currentScreen: state.currentScreen,
-      // Legacy fields (kept for backward compat with older app versions)
-      exploredSeats: state.exploredSeats,
-      assessmentAnswer: state.assessmentAnswer,
-      assessmentAnswered: state.assessmentAnswered,
-      narrationCompleted: state.narrationCompleted,
-      // Current state model
+      currentScreen: state.reviewMode ? state.bookmark : state.currentScreen,
       sceneScores: state.sceneScores || {},
       sceneState: state.sceneState || {},
       // Versioned completion record (absent until first completion)
       completion: state.completion || null,
     });
+    window.ScormApi.setLocation(`scene-${(state.reviewMode ? state.bookmark : state.currentScreen) + 1}`);
   }
 
   function bindGlobalEvents() {
@@ -253,32 +251,18 @@
         const hub = document.getElementById('learning-hub');
         if (hub && hub.classList.contains('visible')) closeLearningHub();
       }
-      // Keyboard navigation: Alt+← (previous scene), Alt+→ (next scene).
-      // Only works if the target scene is unlocked. Doesn't interfere with
-      // text input or modal interactions. Useful for accessibility and
-      // power users who don't want to use the mouse for every transition.
+      // Keyboard navigation between scenes. The page is RTL, so "forward"
+      // is Alt+← (next scene) and Alt+→ is back, matching the ← arrows on
+      // the "next" buttons. Gating is enforced by goToScene().
       if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         // Don't interfere if a modal is open or an input is focused
         if (ModalManager.isOpen()) return;
         if (document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
         e.preventDefault();
-        const direction = e.key === 'ArrowRight' ? 1 : -1;
+        const direction = e.key === 'ArrowLeft' ? 1 : -1;
         const targetIdx = state.currentScreen + direction;
-        // Check if target scene exists and is unlocked
         if (targetIdx < 0 || targetIdx >= CONTENT.screens.length) return;
-        if (targetIdx > state.currentScreen && !isSceneCompleted(targetIdx - 1) && targetIdx !== state.currentScreen + 1) {
-          // Can only advance to the next scene if current is completed
-          if (!isSceneCompleted(state.currentScreen)) {
-            showToast('أكمل المشهد الحالي أولاً', 'warning');
-            return;
-          }
-        }
-        if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
-        Narrator.skipRequested = true;
-        state.currentScreen = targetIdx;
-        resetCurrentSceneState();
-        saveState();
-        renderScene(targetIdx);
+        goToScene(targetIdx);
       }
     });
   }
@@ -297,15 +281,21 @@
 
   function openSceneDrawer() {
     buildSceneDrawerContent();
-    document.getElementById('scene-drawer').classList.add('visible');
+    const drawer = document.getElementById('scene-drawer');
+    drawer.classList.add('visible');
     document.getElementById('scene-drawer-backdrop').classList.add('visible');
-    document.getElementById('scene-drawer').setAttribute('aria-hidden', 'false');
+    drawer.inert = false;
+    const current = drawer.querySelector('.scene-item.current') || document.getElementById('scene-drawer-close');
+    if (current) current.focus();
   }
 
   function closeSceneDrawer() {
-    document.getElementById('scene-drawer').classList.remove('visible');
+    const drawer = document.getElementById('scene-drawer');
+    const hadFocus = drawer.contains(document.activeElement);
+    drawer.classList.remove('visible');
     document.getElementById('scene-drawer-backdrop').classList.remove('visible');
-    document.getElementById('scene-drawer').setAttribute('aria-hidden', 'true');
+    drawer.inert = true;
+    if (hadFocus) document.getElementById('menu-toggle').focus();
   }
 
   function buildSceneDrawerContent() {
@@ -316,7 +306,7 @@
     // score and completion percentage. Previously the drawer only showed
     // scene titles with no aggregate progress feedback.
     const currentScore = Scoring.compute();
-    const completedCount = Object.keys(state.sceneScores || {}).length;
+    const completedCount = countCompletedScenes();
     const progressPct = Math.round((completedCount / total) * 100);
 
     let html = `
@@ -335,8 +325,7 @@
     CONTENT.screens.forEach((scene, idx) => {
       const isCurrent = idx === state.currentScreen;
       const isCompleted = isSceneCompleted(idx);
-      const isUnlocked = idx <= state.currentScreen || isSceneCompleted(idx) || (idx > 0 && isSceneCompleted(idx - 1));
-      const canJump = idx === 0 || isUnlocked || idx <= state.currentScreen;
+      const canJump = isSceneUnlocked(idx);
       const classes = ['scene-item'];
       if (isCurrent) classes.push('current');
       if (isCompleted) classes.push('completed');
@@ -355,21 +344,8 @@
     body.querySelectorAll('.scene-item').forEach(btn => {
       if (btn.disabled) return;
       btn.addEventListener('click', () => {
-        const idx = parseInt(btn.dataset.sceneIdx, 10);
         closeSceneDrawer();
-        // Cancel any in-flight narration/TTS before switching
-        if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
-        Narrator.skipRequested = true;
-        state.currentScreen = idx;
-        // Only reset scene state if the scene is NOT completed. Returning to
-        // a completed scene should preserve exploration/answers so the learner
-        // can review their work — resetting would silently destroy progress.
-        // (Previously this always reset, which broke the review use case.)
-        if (!isSceneCompleted(idx)) {
-          resetCurrentSceneState();
-        }
-        saveState();
-        renderScene(idx);
+        goToScene(parseInt(btn.dataset.sceneIdx, 10));
       });
     });
   }
@@ -377,8 +353,11 @@
   function isSceneCompleted(idx) {
     const scene = CONTENT.screens[idx];
     if (!scene) return false;
-    // Scene 1 (opening) is complete once user has moved past it
-    if (scene.id === 'opening') return state.currentScreen > 0;
+    // Scene 1 (opening) is complete once the learner has moved past it
+    if (scene.id === 'opening') {
+      const ss0 = state.sceneState && state.sceneState[idx];
+      return !!(ss0 && ss0.completed) || state.currentScreen > 0;
+    }
     // Scene 7 (dilemma) has its own completed flag
     if (scene.id === 'dilemma') {
       const ss = state.sceneState && state.sceneState[idx];
@@ -392,30 +371,86 @@
     return false;
   }
 
-  function resetCurrentSceneState() {
-    // Clear the current scene's state so re-entry plays fresh.
-    // All scenes (including boardroom) now use sceneState[idx] — no legacy
-    // state variables to reset.
-    if (state.sceneState) {
-      delete state.sceneState[state.currentScreen];
+  function countCompletedScenes() {
+    return CONTENT.screens.filter((s, i) => isSceneCompleted(i)).length;
+  }
+
+  // A scene can be opened if it is the first one, already completed, or
+  // directly follows a completed scene. This is the ONE gating rule; the
+  // drawer, the hub, keyboard shortcuts and the "next" buttons all go
+  // through goToScene(), which enforces it.
+  function isSceneUnlocked(idx) {
+    return idx === 0 || isSceneCompleted(idx) || isSceneCompleted(idx - 1);
+  }
+
+  function goToScene(idx, opts = {}) {
+    if (idx < 0 || idx >= CONTENT.screens.length) return false;
+    if (!isSceneUnlocked(idx)) {
+      showToast('أكمل المشهد الحالي أولاً', 'warning');
+      return false;
     }
+    if (opts.review) {
+      enterReviewMode();
+    } else if (state.reviewMode && !isSceneCompleted(idx)) {
+      // Unfinished work always happens in training mode, so answers count.
+      leaveReviewMode();
+    }
+    // Re-entering an unfinished scene plays it fresh. A completed scene keeps
+    // its exploration and answers so the learner can review their work.
+    if (!isSceneCompleted(idx) && state.sceneState) {
+      delete state.sceneState[idx];
+    }
+    renderScene(idx);
+    return true;
   }
 
   function restartCourse() {
-    if (!confirm('هل أنت متأكد من إعادة الرحلة من البداية؟ سيتم مسح تقدّمك.')) return;
+    confirmDialog({
+      title: 'إعادة الرحلة من البداية؟',
+      message: 'سيتم مسح تقدّمك في المشاهد. سجلّ إتمامك السابق في نظام التعلّم لن يتأثر.',
+      confirmLabel: 'نعم، ابدأ من جديد',
+      onConfirm: doRestartCourse,
+    });
+  }
+
+  function doRestartCourse() {
     state.currentScreen = 0;
     state.sceneScores = {};
     state.sceneState = {};
-    if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
-    Narrator.skipRequested = true;
+    state.completion = null;
+    leaveReviewMode();
     // Re-init Scoring with the fresh (empty) scores object.
-    if (window.Scoring) Scoring.init(state.sceneScores, CONTENT.screens.length);
+    Scoring.init(state.sceneScores, scoredSceneCount(), CONTENT.course.scoring_policy);
     saveState();
+    // ScormApi refuses to downgrade a passed/completed record, so this only
+    // reopens an attempt that was never finished.
     window.ScormApi.setStatus('incomplete');
-    Scoring.commit();
+    window.ScormApi.setExit('suspend');
     closeSceneDrawer();
     renderScene(0);
     showToast('بدأت الرحلة من جديد', 'success');
+  }
+
+  // In-page confirmation. Native confirm() is blocked in LMS iframes that are
+  // sandboxed without allow-modals, where it silently returns false.
+  function confirmDialog({ title, message, confirmLabel, onConfirm }) {
+    const content = `
+      <div class="seat-modal-card confirm-card" tabindex="-1">
+        <h3 class="seat-modal-title">${escapeHtml(title)}</h3>
+        <div class="seat-modal-def">${escapeHtml(message)}</div>
+        <div class="confirm-actions">
+          <button class="seat-modal-close" type="button" data-confirm="yes">${escapeHtml(confirmLabel)}</button>
+          <button class="completion-secondary" type="button" data-confirm="no">إلغاء</button>
+        </div>
+      </div>
+    `;
+    ModalManager.open({ content, label: title });
+    const overlay = ModalManager.current.overlay;
+    overlay.querySelector('[data-confirm="no"]').addEventListener('click', () => ModalManager.close());
+    overlay.querySelector('[data-confirm="yes"]').addEventListener('click', () => {
+      ModalManager.close();
+      onConfirm();
+    });
   }
 
   // ---------- Narration Controls ----------
@@ -567,14 +602,14 @@
     }
 
     overlay.classList.add('visible');
-    overlay.setAttribute('aria-hidden', 'false');
+    overlay.inert = false;
   }
 
   function hideTTSActivationOverlay() {
     const overlay = document.getElementById('tts-activation');
     if (!overlay) return;
     overlay.classList.remove('visible');
-    overlay.setAttribute('aria-hidden', 'true');
+    overlay.inert = true;
   }
 
   // Check if TTS activation overlay should be shown (only once, on first scene)
@@ -789,6 +824,8 @@
       Narrator.hideNarrator();
       document.getElementById('subtitle-bar').classList.remove('visible', 'controls-visible');
       document.body.classList.remove('cinematic');
+      // Lets tests and analytics know which scene is on stage.
+      stage.dataset.scene = scene.id;
 
       // Render scene-specific content (guarded so a throw in any renderer
       // shows the recovery UI instead of leaving the stage blank).
@@ -831,14 +868,9 @@
         <span class="cta-arrow">→</span>
       </button>
     `;
-    setTimeout(() => {
-      document.getElementById('cta-back').addEventListener('click', () => {
-        if (state.currentScreen > 0) {
-          state.currentScreen--;
-          renderScene(state.currentScreen);
-        }
-      });
-    }, 100);
+    document.getElementById('cta-back').addEventListener('click', () => {
+      if (state.currentScreen > 0) goToScene(state.currentScreen - 1);
+    });
   }
 
   // ============================================================
@@ -898,9 +930,11 @@
           // We just persist currentScreen so a reload returns here.
           saveState();
           showCTA(scene.cta_label, scene.cta_hint, () => {
+            const ss0 = state.sceneState[state.currentScreen] || (state.sceneState[state.currentScreen] = {});
+            ss0.completed = true;
             // Move to next scene
             Animator.scaleOut($stage(), 0.4, () => {
-              renderScene(1);
+              goToScene(state.currentScreen + 1);
             });
           });
         },
@@ -908,6 +942,14 @@
     }});
 
     Animator.runTimeline(tl);
+  }
+
+  // Scene-scoped timer: cancelled automatically when the learner leaves the
+  // scene (renderScene → Animator.clear()). Every delayed UI step inside a
+  // scene must use this — a bare setTimeout outlives the scene and can write
+  // into the NEXT scene's DOM (or record an answer against it).
+  function later(ms, fn) {
+    return Animator.delay(ms / 1000, fn);
   }
 
   function typeTitle(el, text, speed = 60, onDone = null) {
@@ -922,28 +964,31 @@
       }
       i++;
       span.textContent = text.substring(0, i);
-      setTimeout(next, speed);
+      later(speed, next);
     }
     next();
   }
 
-  function showCTA(label, hint, onClick) {
+  // Renders the CTA button; the click handler is bound immediately and the
+  // reveal animation runs a frame later.
+  function showCTA(label, hint, onClick, id = 'cta-btn') {
     const zone = $ctaZone();
     zone.classList.remove('empty');
     zone.innerHTML = `
-      <button class="cta-primary" id="cta-btn" type="button">
-        <span>${label}</span>
+      <button class="cta-primary" id="${id}" type="button">
+        <span>${escapeHtml(label)}</span>
         <span class="cta-arrow">←</span>
       </button>
-      ${hint ? `<div class="cta-hint" id="cta-hint">${hint}</div>` : ''}
+      ${hint ? `<div class="cta-hint">${escapeHtml(hint)}</div>` : ''}
     `;
-    setTimeout(() => {
-      const btn = document.getElementById('cta-btn');
+    const btn = document.getElementById(id);
+    btn.addEventListener('click', onClick);
+    later(100, () => {
       btn.classList.add('visible');
-      const h = document.getElementById('cta-hint');
+      const h = zone.querySelector('.cta-hint');
       if (h) h.classList.add('visible');
-      btn.addEventListener('click', onClick);
-    }, 100);
+    });
+    return btn;
   }
 
   // ============================================================
@@ -966,11 +1011,11 @@
     const seatsSvg = scene.seats.map((seat, i) => {
       return `
         <g class="seat" id="seat-${seat.n}" data-seat-n="${seat.n}" tabindex="0" role="button"
-           aria-label="المقعد ${seat.n}: ${seat.label}. اضغط للاستكشاف"
+           aria-label="المقعد ${arabicNumeral(seat.n)}: ${escapeHtml(seat.label)}. اضغط للاستكشاف"
            transform="translate(${seat.position.x}, ${seat.position.y})">
           <circle class="seat-circle" r="40"/>
-          <text class="seat-icon" y="2">${seat.icon}</text>
-          <text class="seat-label" y="62">${seat.label}</text>
+          <text class="seat-icon" y="2" aria-hidden="true">${escapeHtml(seat.icon)}</text>
+          <text class="seat-label" y="62" aria-hidden="true">${escapeHtml(seat.label)}</text>
           <text class="seat-check" y="-30" font-size="20" fill="#81C784" text-anchor="middle">✓</text>
         </g>
       `;
@@ -1010,22 +1055,10 @@
           <div class="progress-dots" id="progress-dots">
             ${scene.seats.map(() => '<span class="progress-dot"></span>').join('')}
           </div>
-          <span id="progress-text">٠ من ٦</span>
+          <span id="progress-text">٠ من ${arabicNumeral(scene.seats.length)}</span>
         </div>
 
-        <div class="assessment-panel" id="assessment-panel">
-          <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
-          <div class="assessment-options" id="assessment-options">
-            ${scene.assessment.options.map((opt, i) => `
-              <button class="assessment-option" data-idx="${i}" type="button">
-                <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${escapeHtml(opt)}</span>
-              </button>
-            `).join('')}
-          </div>
-          <div class="assessment-feedback" id="assessment-feedback"></div>
-        </div>
+        ${buildAssessmentPanel(scene, { eyebrow: 'اختبار سريع' })}
       </div>
     `;
 
@@ -1049,7 +1082,7 @@
         // Reveal seats staggered
         const seats = document.querySelectorAll('.seat');
         seats.forEach((s, i) => {
-          setTimeout(() => s.classList.add('seat-revealing'), i * 120);
+          later(i * 120, () => s.classList.add('seat-revealing'));
         });
       }});
     }
@@ -1094,11 +1127,11 @@
       updateProgress(scene);
       // Restore assessment if answered
       if (ss.answered) {
-        showAssessmentAnswer(scene);
-      } else if (ss.explored.length === 6) {
+        restoreAnsweredAssessment(scene);
+      } else if (ss.explored.length === scene.seats.length) {
         // All seats explored but not yet answered — show + enable assessment
         document.getElementById('assessment-panel').classList.add('visible');
-        enableBoardroomAssessment(scene);
+        enableAssessment(scene);
       }
     } else {
       Animator.runTimeline(tl);
@@ -1129,7 +1162,7 @@
     const content = `
       <div class="seat-modal-card" tabindex="-1">
         <div class="seat-modal-num">${arabicNumeral(seat.n)}</div>
-        <div class="seat-modal-eyebrow">المقعد ${arabicNumeral(seat.n)} من ٦</div>
+        <div class="seat-modal-eyebrow">المقعد ${arabicNumeral(seat.n)} من ${arabicNumeral(scene.seats.length)}</div>
         <h3 class="seat-modal-title">${escapeHtml(seat.label)}</h3>
         <div class="seat-modal-story">${escapeHtml(seat.story)}</div>
         <div class="seat-modal-def-label">التعريف الرسمي</div>
@@ -1149,15 +1182,9 @@
           if (el) el.classList.add('completed');
           saveState();
           updateProgress(scene);
-          // If all 6 explored, reveal assessment
-          if (ss.explored.length === 6 && !ss.answered) {
-            setTimeout(() => {
-              const panel = document.getElementById('assessment-panel');
-              panel.classList.add('visible');
-              enableBoardroomAssessment(scene);
-              panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              showToast('أحسنت! اختبر فهمك الآن', 'success');
-            }, 400);
+          // Once every seat is explored, reveal the assessment
+          if (ss.explored.length === scene.seats.length && !ss.answered) {
+            later(400, () => revealAssessment(scene));
           }
         }
       },
@@ -1185,44 +1212,6 @@
     }
   }
 
-  function enableBoardroomAssessment(scene) {
-    const ss = state.sceneState[state.currentScreen];
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach(opt => {
-      opt.addEventListener('click', () => {
-        if (ss.answered) return;
-        const idx = parseInt(opt.dataset.idx, 10);
-        handleBoardroomAssessmentAnswer(idx, scene);
-      });
-    });
-  }
-
-  function handleBoardroomAssessmentAnswer(idx, scene) {
-    const ss = state.sceneState[state.currentScreen];
-    const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
-    showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
-
-    // In review mode, don't persist answers or update scores.
-    if (state.reviewMode) {
-      setTimeout(() => showReviewReturnCTA(scene), 2000);
-      return;
-    }
-
-    ss.answer = idx;
-    ss.answered = true;
-    // Record score via the centralized Scoring module.
-    Scoring.recordAndCommit(state.currentScreen, correct);
-    saveState();
-
-    // After delay, show the shared advance/retry CTA.
-    setTimeout(() => showAdvanceOrRetryCTA(scene, correct), 2000);
-  }
-
-  function showAssessmentAnswer(scene) {
-    const ss = state.sceneState[state.currentScreen];
-    renderAssessmentResult(scene, ss.answer);
-  }
-
   // ============================================================
   // SCENE 3 — Building the Framework (Layered Ziggurat)
   // ============================================================
@@ -1240,8 +1229,8 @@
     // Render layers (DOM order: bottom = layer 1; we use column-reverse in CSS)
     const layersHtml = scene.layers.map(layer => `
       <div class="framework-layer" data-layer="${layer.n}" data-layer-idx="${layer.n - 1}" tabindex="0" role="button"
-           aria-label="الطبقة ${arabicNumeral(layer.n)}: ${layer.label}. اضغط للاستكشاف">
-        <div class="framework-layer-num">${layer.icon}</div>
+           aria-label="الطبقة ${arabicNumeral(layer.n)}: ${escapeHtml(layer.label)}. اضغط للاستكشاف">
+        <div class="framework-layer-num" aria-hidden="true">${escapeHtml(layer.icon)}</div>
         <div class="framework-layer-label">${escapeHtml(layer.label)}</div>
         <div class="framework-layer-check">✓</div>
       </div>
@@ -1262,19 +1251,7 @@
           </div>
           <span id="fw-progress-text">٠ من ${arabicNumeral(scene.layers.length)}</span>
         </div>
-        <div class="assessment-panel" id="assessment-panel">
-          <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
-          <div class="assessment-options" id="assessment-options">
-            ${scene.assessment.options.map((opt, i) => `
-              <button class="assessment-option" data-idx="${i}" type="button">
-                <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${escapeHtml(opt)}</span>
-              </button>
-            `).join('')}
-          </div>
-          <div class="assessment-feedback" id="assessment-feedback"></div>
-        </div>
+        ${buildAssessmentPanel(scene, { eyebrow: 'اختبار سريع' })}
       </div>
     `;
 
@@ -1333,11 +1310,11 @@
       });
       updateFrameworkProgress(scene);
       if (ss.answered) {
-        showFrameworkAssessment(scene);
+        restoreAnsweredAssessment(scene);
       } else if (ss.explored.length === scene.layers.length) {
         // All explored but not yet answered — show + enable assessment
         document.getElementById('assessment-panel').classList.add('visible');
-        enableAssessment(scene, 'framework');
+        enableAssessment(scene);
       }
     } else {
       Animator.runTimeline(tl);
@@ -1361,7 +1338,7 @@
   function openLayerModal(layer, scene) {
     const content = `
       <div class="seat-modal-card" tabindex="-1">
-        <div class="seat-modal-num">${layer.icon}</div>
+        <div class="seat-modal-num" aria-hidden="true">${escapeHtml(layer.icon)}</div>
         <div class="seat-modal-eyebrow">الطبقة ${arabicNumeral(layer.n)} من ${arabicNumeral(scene.layers.length)}</div>
         <h3 class="seat-modal-title">${escapeHtml(layer.label)}</h3>
         <div class="seat-modal-story">${escapeHtml(layer.story)}</div>
@@ -1382,12 +1359,7 @@
           saveState();
           updateFrameworkProgress(scene);
           if (ss.explored.length === scene.layers.length && !ss.answered) {
-            setTimeout(() => {
-              document.getElementById('assessment-panel').classList.add('visible');
-              enableAssessment(scene, 'framework');
-              document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-              showToast('أحسنت! اختبر فهمك الآن', 'success');
-            }, 400);
+            later(400, () => revealAssessment(scene));
           }
         }
       },
@@ -1412,11 +1384,6 @@
       prog.style.borderColor = 'var(--green)';
       prog.style.color = 'var(--green)';
     }
-  }
-
-  function showFrameworkAssessment(scene) {
-    const ss = state.sceneState[state.currentScreen];
-    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1468,19 +1435,7 @@
           </div>
           <span id="pl-progress-text">٠ من ٢</span>
         </div>
-        <div class="assessment-panel" id="assessment-panel">
-          <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
-          <div class="assessment-options" id="assessment-options">
-            ${scene.assessment.options.map((opt, i) => `
-              <button class="assessment-option" data-idx="${i}" type="button">
-                <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${escapeHtml(opt)}</span>
-              </button>
-            `).join('')}
-          </div>
-          <div class="assessment-feedback" id="assessment-feedback"></div>
-        </div>
+        ${buildAssessmentPanel(scene, { eyebrow: 'اختبار سريع' })}
       </div>
     `;
 
@@ -1539,11 +1494,11 @@
       });
       updatePillarsProgress(scene);
       if (ss.answered) {
-        showPillarsAssessment(scene);
+        restoreAnsweredAssessment(scene);
       } else if (ss.explored.length === 2) {
         // Both pillars explored but not yet answered — show + enable assessment
         document.getElementById('assessment-panel').classList.add('visible');
-        enableAssessment(scene, 'pillars');
+        enableAssessment(scene);
       }
     } else {
       Animator.runTimeline(tl);
@@ -1568,8 +1523,6 @@
     const el = document.getElementById('pillar-' + p);
     if (!el) return;
     const ss = state.sceneState[state.currentScreen];
-    // Toggle expansion
-    const wasExpanded = el.classList.contains('expanded');
     el.classList.add('expanded');
     // Dim the other pillar
     const other = document.getElementById('pillar-' + (p === 'gov' ? 'comp' : 'gov'));
@@ -1580,16 +1533,11 @@
       saveState();
       updatePillarsProgress(scene);
       if (ss.explored.length === 2 && !ss.answered) {
-        setTimeout(() => {
-          document.getElementById('assessment-panel').classList.add('visible');
-          enableAssessment(scene, 'pillars');
-          document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-          showToast('أحسنت! اختبر فهمك الآن', 'success');
-        }, 400);
+        later(400, () => revealAssessment(scene));
       }
     }
     // Scroll to top of pillar so facets are visible
-    setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+    later(100, () => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
   }
 
   function updatePillarsProgress(scene) {
@@ -1608,11 +1556,6 @@
       prog.style.borderColor = 'var(--green)';
       prog.style.color = 'var(--green)';
     }
-  }
-
-  function showPillarsAssessment(scene) {
-    const ss = state.sceneState[state.currentScreen];
-    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1645,19 +1588,7 @@
           ${scene.cases.map((c, i) => `<div class="court-progress-dot" data-case="${c.n}">${arabicNumeral(c.n)}</div>`).join('')}
         </div>
         <div id="ct-case-container"></div>
-        <div class="assessment-panel" id="assessment-panel">
-          <div class="assessment-eyebrow">القاعدة الذهبية</div>
-          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
-          <div class="assessment-options" id="assessment-options">
-            ${scene.assessment.options.map((opt, i) => `
-              <button class="assessment-option" data-idx="${i}" type="button">
-                <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${escapeHtml(opt)}</span>
-              </button>
-            `).join('')}
-          </div>
-          <div class="assessment-feedback" id="assessment-feedback"></div>
-        </div>
+        ${buildAssessmentPanel(scene, { eyebrow: 'القاعدة الذهبية' })}
       </div>
     `;
 
@@ -1692,10 +1623,10 @@
       // If all classified, show assessment
       if (Object.keys(ss.classifications).length === scene.cases.length) {
         if (ss.answered) {
-          showCourtAssessment(scene);
+          restoreAnsweredAssessment(scene);
         } else {
           document.getElementById('assessment-panel').classList.add('visible');
-          enableAssessment(scene, 'court');
+          enableAssessment(scene);
         }
       } else {
         // Resume at first unclassified case
@@ -1750,7 +1681,7 @@
           const isNowCorrect = choice === caseData.classification;
           showToast(isNowCorrect ? 'تصنيف صحيح!' : 'تصنيف غير صحيح', isNowCorrect ? 'success' : 'error');
           // Advance to next case after delay
-          setTimeout(() => {
+          later(2800, () => {
             const nextCase = scene.cases.find(c => !ss.classifications[c.n]);
             if (nextCase) {
               ss.currentCase = nextCase.n;
@@ -1761,12 +1692,9 @@
               // All classified — show assessment
               ss.currentCase = null;
               saveState();
-              document.getElementById('assessment-panel').classList.add('visible');
-              enableAssessment(scene, 'court');
-              document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-              showToast('أحسنت! اختبر فهمك بالقاعدة الذهبية', 'success');
+              revealAssessment(scene, 'أحسنت! اختبر فهمك بالقاعدة الذهبية');
             }
-          }, 2800);
+          });
         });
       });
     }
@@ -1785,11 +1713,6 @@
         dot.classList.add('current');
       }
     });
-  }
-
-  function showCourtAssessment(scene) {
-    const ss = state.sceneState[state.currentScreen];
-    renderAssessmentResult(scene, ss.answer);
   }
 
   // ============================================================
@@ -1818,9 +1741,9 @@
       const y = cy + radius * Math.sin(angleRad);
       return `
         <g class="integrity-star" id="star-${star.n}" data-star-n="${star.n}" transform="translate(${x}, ${y})" tabindex="0" role="button"
-           aria-label="النجم ${arabicNumeral(star.n)}: ${star.label}. اضغط للاستكشاف">
+           aria-label="النجم ${arabicNumeral(star.n)}: ${escapeHtml(star.label)}. اضغط للاستكشاف">
           <circle class="star-circle" r="26"/>
-          <text class="star-icon" y="2">${star.icon}</text>
+          <text class="star-icon" y="2" aria-hidden="true">${escapeHtml(star.icon)}</text>
           <text class="star-label" y="48">${escapeHtml(star.label)}</text>
           <text class="star-check" y="-30">✓</text>
         </g>
@@ -1830,9 +1753,9 @@
     // Center star (larger)
     const centerStarHtml = centerStar ? `
       <g class="integrity-star star-center" id="star-${centerStar.n}" data-star-n="${centerStar.n}" transform="translate(${cx}, ${cy})" tabindex="0" role="button"
-         aria-label="النجم المركزي: ${centerStar.label}. اضغط للاستكشاف">
+         aria-label="النجم المركزي: ${escapeHtml(centerStar.label)}. اضغط للاستكشاف">
         <circle class="star-circle" r="36"/>
-        <text class="star-icon" y="2">${centerStar.icon}</text>
+        <text class="star-icon" y="2" aria-hidden="true">${escapeHtml(centerStar.icon)}</text>
         <text class="star-label" y="56">${escapeHtml(centerStar.label)}</text>
         <text class="star-check" y="-40">✓</text>
       </g>
@@ -1879,19 +1802,7 @@
           </div>
           <span id="in-progress-text">٠ من ${arabicNumeral(scene.stars.length)}</span>
         </div>
-        <div class="assessment-panel" id="assessment-panel">
-          <div class="assessment-eyebrow">اختبار سريع</div>
-          <div class="assessment-question">${escapeHtml(scene.assessment.question)}</div>
-          <div class="assessment-options" id="assessment-options">
-            ${scene.assessment.options.map((opt, i) => `
-              <button class="assessment-option" data-idx="${i}" type="button">
-                <span class="option-letter">${['أ','ب','ج','د'][i]}</span>
-                <span class="option-text">${escapeHtml(opt)}</span>
-              </button>
-            `).join('')}
-          </div>
-          <div class="assessment-feedback" id="assessment-feedback"></div>
-        </div>
+        ${buildAssessmentPanel(scene, { eyebrow: 'اختبار سريع' })}
       </div>
     `;
 
@@ -1938,11 +1849,11 @@
       });
       updateIntegrityProgress(scene);
       if (ss.answered) {
-        showIntegrityAssessment(scene);
+        restoreAnsweredAssessment(scene);
       } else if (ss.explored.length === scene.stars.length) {
         // All stars explored but not yet answered — show + enable assessment
         document.getElementById('assessment-panel').classList.add('visible');
-        enableAssessment(scene, 'integrity');
+        enableAssessment(scene);
       }
     } else {
       Animator.runTimeline(tl);
@@ -1982,7 +1893,7 @@
     }
     const content = `
       <div class="seat-modal-card" tabindex="-1">
-        <div class="seat-modal-num">${star.icon}</div>
+        <div class="seat-modal-num" aria-hidden="true">${escapeHtml(star.icon)}</div>
         <div class="seat-modal-eyebrow">${star.isCenter ? 'النجم المركزي' : 'النجم ' + arabicNumeral(star.n) + ' من ' + arabicNumeral(scene.stars.length)}</div>
         <h3 class="seat-modal-title">${escapeHtml(star.label)}</h3>
         <div class="seat-modal-story">${escapeHtml(star.story)}</div>
@@ -2004,12 +1915,7 @@
           saveState();
           updateIntegrityProgress(scene);
           if (ss.explored.length === scene.stars.length && !ss.answered) {
-            setTimeout(() => {
-              document.getElementById('assessment-panel').classList.add('visible');
-              enableAssessment(scene, 'integrity');
-              document.getElementById('assessment-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-              showToast('أحسنت! اختبر فهمك الآن', 'success');
-            }, 400);
+            later(400, () => revealAssessment(scene));
           }
         }
       },
@@ -2036,11 +1942,6 @@
     }
   }
 
-  function showIntegrityAssessment(scene) {
-    const ss = state.sceneState[state.currentScreen];
-    renderAssessmentResult(scene, ss.answer);
-  }
-
   // ============================================================
   // SCENE 7 — The Dilemma (Branching Scenario)
   // ============================================================
@@ -2052,7 +1953,8 @@
     if (!state.sceneState[state.currentScreen]) {
       state.sceneState[state.currentScreen] = {
         phaseAnswers: {}, // {phaseN: optionIdx}
-        phaseCorrect: {}, // {phaseN: bool}
+        phaseCorrect: {}, // {phaseN: bool} — latest decision
+        phaseFirst: {}, // {phaseN: bool} — first decision (scored)
         currentPhase: 1,
         completed: false,
         narrationCompleted: false,
@@ -2154,10 +2056,14 @@
         btn.addEventListener('click', () => {
           const idx = parseInt(btn.dataset.idx, 10);
           const opt = phase.options[idx];
-          // In review mode, show the consequence but don't persist.
+          // In review mode the consequence is shown but nothing persists.
+          // phaseFirst keeps the learner's first decision per phase: under
+          // the default 'first_attempt' policy it is what gets scored, so
+          // "try again" teaches without inflating the score.
           if (!state.reviewMode) {
             ss.phaseAnswers[phaseN] = idx;
             ss.phaseCorrect[phaseN] = !!opt.correct;
+            if (ss.phaseFirst[phaseN] === undefined) ss.phaseFirst[phaseN] = !!opt.correct;
             saveState();
           }
           // Re-render phase to show consequence
@@ -2174,11 +2080,14 @@
       if (nextBtn) {
         nextBtn.addEventListener('click', () => {
           const nextN = phaseN + 1;
-          ss.currentPhase = nextN;
-          saveState();
+          if (!state.reviewMode) {
+            ss.currentPhase = nextN;
+            saveState();
+          }
           showDilemmaPhase(scene, nextN);
           updateDilemmaProgress(scene);
-          document.getElementById(`dilemma-card-${nextN}`).scrollIntoView({ behavior: 'smooth', block: 'center' });
+          const card = document.getElementById(`dilemma-card-${nextN}`);
+          if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         });
       }
       if (retryBtn) {
@@ -2192,19 +2101,21 @@
       }
       if (finishBtn) {
         finishBtn.addEventListener('click', () => {
-          ss.completed = true;
-          saveState();
-          // Show reflection
+          finishBtn.disabled = true;
           document.getElementById('dl-reflection').classList.add('show');
+          if (state.reviewMode) {
+            later(1500, () => showReviewReturnCTA(scene));
+            return;
+          }
+          ss.completed = true;
           // Record dilemma score with partial credit via the Scoring module.
-          const correctPhases = Object.values(ss.phaseCorrect).filter(v => v).length;
-          const totalPhases = scene.phases.length;
-          Scoring.recordDilemma(state.currentScreen, correctPhases, totalPhases);
+          const source = CONTENT.course.scoring_policy === 'best_attempt' ? ss.phaseCorrect : ss.phaseFirst;
+          const correctPhases = Object.values(source).filter(v => v).length;
+          Scoring.recordDilemma(state.currentScreen, correctPhases, scene.phases.length);
           Scoring.commit();
           saveState();
-          // Show the completion screen (replaces the old toast-only flow).
           // Short delay so the learner sees the reflection first.
-          setTimeout(() => showCompletionScreen(), 1500);
+          later(1500, () => finishCourse());
         });
       }
     }
@@ -2222,156 +2133,110 @@
     });
   }
 
+  // Shown when returning to a completed dilemma. The score is already
+  // recorded, so the only way forward is the result screen.
   function showDilemmaFinalCTA(scene) {
-    const ss = state.sceneState[state.currentScreen];
-    const correctPhases = Object.values(ss.phaseCorrect).filter(v => v).length;
-    const totalPhases = scene.phases.length;
-    const allCorrect = correctPhases === totalPhases;
-    const ctaZone = $ctaZone();
-    ctaZone.classList.remove('empty');
-    ctaZone.innerHTML = `
-      <button class="cta-primary" id="cta-finish" type="button">
-        <span>${allCorrect ? 'أكملت الرحلة ✓' : 'إعادة المعضلة'}</span>
-        <span class="cta-arrow">←</span>
-      </button>
-      <div class="cta-hint">${allCorrect ? 'تهانينا على إتمام رحلة الحوكمة' : 'حاول مرة أخرى لتحسين نتيجتك'}</div>
-    `;
-    setTimeout(() => {
-      const btn = document.getElementById('cta-finish');
-      btn.classList.add('visible');
-      const h = ctaZone.querySelector('.cta-hint');
-      if (h) h.classList.add('visible');
-      btn.addEventListener('click', () => {
-        if (allCorrect) {
-          showToast('تهانينا! أكملت رحلة الحوكمة بنجاح', 'success');
-        } else {
-          // Reset dilemma
-          state.sceneState[state.currentScreen] = {
-            phaseAnswers: {}, phaseCorrect: {}, currentPhase: 1, completed: false, narrationCompleted: true,
-          };
-          saveState();
-          document.getElementById('dl-reflection').classList.remove('show');
-          ctaZone.classList.add('empty');
-          ctaZone.innerHTML = '';
-          showDilemmaPhase(scene, 1);
-          updateDilemmaProgress(scene);
-        }
-      });
-    }, 100);
+    if (state.reviewMode) { showReviewReturnCTA(scene); return; }
+    showCTA('عرض النتيجة', 'تهانينا على إتمام رحلة الحوكمة', () => showCompletionScreen(), 'cta-finish');
   }
 
-  // ---------- Generic Assessment Handler (scenes 3-6) ----------
-  function enableAssessment(scene, sceneType) {
+  // ---------- Assessment flow (all MCQ scenes) ----------
+  // Option buttons are rendered once per scene and bound once; whether a
+  // click counts is decided at click time, so "try again" never stacks a
+  // second handler on the same buttons.
+  function enableAssessment(scene) {
     const opts = document.querySelectorAll('#assessment-options .assessment-option');
     opts.forEach(opt => {
-      opt.addEventListener('click', () => {
-        if (state.sceneState[state.currentScreen] && state.sceneState[state.currentScreen].answered) return;
-        const idx = parseInt(opt.dataset.idx, 10);
-        handleGenericAssessmentAnswer(idx, scene, sceneType);
-      });
+      if (opt.dataset.bound) return;
+      opt.dataset.bound = '1';
+      opt.addEventListener('click', () => handleAssessmentAnswer(parseInt(opt.dataset.idx, 10), scene));
     });
   }
 
-  function handleGenericAssessmentAnswer(idx, scene, sceneType) {
+  function revealAssessment(scene, toast = 'أحسنت! اختبر فهمك الآن') {
+    const panel = document.getElementById('assessment-panel');
+    if (!panel) return;
+    panel.classList.add('visible');
+    enableAssessment(scene);
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showToast(toast, 'success');
+  }
+
+  function handleAssessmentAnswer(idx, scene) {
     const ss = state.sceneState[state.currentScreen];
-    const correct = renderAssessmentResult(scene, idx) ?? (idx === scene.assessment.correct_index);
+    const options = document.getElementById('assessment-options');
+    if (!ss || ss.answered || (options && options.dataset.locked)) return;
+    const correct = renderAssessmentResult(scene, idx);
     showToast(correct ? 'إجابة صحيحة!' : 'إجابة غير صحيحة', correct ? 'success' : 'error');
 
     // In review mode, don't persist answers or update scores.
     if (state.reviewMode) {
-      setTimeout(() => showReviewReturnCTA(scene), 2000);
+      later(2000, () => showReviewReturnCTA(scene));
       return;
     }
 
     ss.answer = idx;
     ss.answered = true;
-    // Record score via the centralized Scoring module.
+    // Scoring applies the course policy (first attempt counts by default).
     Scoring.recordAndCommit(state.currentScreen, correct);
     saveState();
 
-    // After delay, show the shared advance/retry CTA.
-    setTimeout(() => showAdvanceOrRetryCTA(scene, correct), 2000);
+    later(2000, () => showAdvanceOrRetryCTA(scene, correct));
+  }
+
+  // Returning to an answered scene: show the result and a way forward
+  // (next / try again), or back to the hub in review mode.
+  function restoreAnsweredAssessment(scene) {
+    const ss = state.sceneState[state.currentScreen];
+    const correct = renderAssessmentResult(scene, ss.answer);
+    if (state.reviewMode) showReviewReturnCTA(scene);
+    else showAdvanceOrRetryCTA(scene, correct);
   }
 
   // In review mode, after answering an assessment, show a "return to hub"
   // CTA instead of the advance/retry CTA. This makes it clear the answer
   // didn't count and gives the learner an easy way back.
-  function showReviewReturnCTA(scene) {
-    const ctaZone = $ctaZone();
-    ctaZone.classList.remove('empty');
-    ctaZone.innerHTML = `
-      <button class="cta-primary" id="cta-review-return" type="button">
-        <span>العودة إلى مركز التعلم</span>
-        <span class="cta-arrow">←</span>
-      </button>
-      <div class="cta-hint">وضع المراجعة — لم تُحتسب إجابتك</div>
-    `;
-    setTimeout(() => {
-      const btn = document.getElementById('cta-review-return');
-      btn.classList.add('visible');
-      const h = ctaZone.querySelector('.cta-hint');
-      if (h) h.classList.add('visible');
-      btn.addEventListener('click', () => {
-        openLearningHub();
-      });
-    }, 100);
+  function showReviewReturnCTA() {
+    showCTA('العودة إلى مركز التعلم', 'وضع المراجعة — لا تُحتسب إجاباتك', () => openLearningHub(), 'cta-review-return');
   }
 
   // ---------- In-place assessment reset (no re-render) ----------
   // Used by all scenes when learner clicks "Try Again" after a wrong answer.
-  // Resets the assessment UI without re-rendering the entire scene, which
-  // avoids losing scroll position, exploration state, and animation lifecycle.
-  function resetAssessmentInPlace(scene) {
+  // The recorded score is left to the Scoring policy: under 'first_attempt'
+  // the first (wrong) answer stays recorded; under 'best_attempt' a later
+  // correct answer upgrades it.
+  function resetAssessmentInPlace() {
     const ss = state.sceneState[state.currentScreen];
-    // Reset state
     if (ss) {
       ss.answer = null;
       ss.answered = false;
     }
-    // Reset score for this scene and recompute total via Scoring module.
-    Scoring.recordScene(state.currentScreen, false);
-    Scoring.commit();
     saveState();
 
-    // Reset UI: unlock options, remove correct/incorrect styling
-    const opts = document.querySelectorAll('#assessment-options .assessment-option');
-    opts.forEach(o => {
+    const options = document.getElementById('assessment-options');
+    if (options) delete options.dataset.locked;
+    document.querySelectorAll('#assessment-options .assessment-option').forEach(o => {
       o.classList.remove('locked', 'correct', 'incorrect', 'selected');
     });
-    // Clear feedback
     const fb = document.getElementById('assessment-feedback');
     if (fb) {
       fb.className = 'assessment-feedback';
       fb.innerHTML = '';
     }
-    // Hide CTA
     const ctaZone = $ctaZone();
     ctaZone.innerHTML = '';
     ctaZone.classList.add('empty');
-    // Ensure panel is visible
     const panel = document.getElementById('assessment-panel');
-    if (panel) panel.classList.add('visible');
-    // Re-enable assessment with fresh click handlers
-    // Use boardroom-specific handler for scene 2, generic for others
-    if (state.currentScreen === 1) {
-      enableBoardroomAssessment(scene);
-    } else {
-      enableAssessment(scene, getCurrentSceneType());
+    if (panel) {
+      panel.classList.add('visible');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-    // Scroll assessment into view
-    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
     showToast('حاول مرة أخرى', 'warning');
-  }
-
-  function getCurrentSceneType() {
-    const scene = CONTENT.screens[state.currentScreen];
-    return scene ? scene.id : 'unknown';
   }
 
   // ---------- Production Notes drawer ----------
   function toggleNotes() {
     const drawer = document.getElementById('notes-drawer');
-    const backdrop = document.getElementById('notes-backdrop');
     if (drawer.classList.contains('visible')) {
       closeNotes();
     } else {
@@ -2386,8 +2251,8 @@
     const body = document.getElementById('notes-body');
 
     let html = `
-      <div class="notes-screen-title">${spec.screen_title}</div>
-      <div class="notes-screen-meta">مشهد ${arabicNumeral(scene.scene_number)} من ${arabicNumeral(CONTENT.screens.length)} · ${scene.id}</div>
+      <div class="notes-screen-title">${escapeHtml(spec.screen_title)}</div>
+      <div class="notes-screen-meta">مشهد ${arabicNumeral(scene.scene_number)} من ${arabicNumeral(CONTENT.screens.length)} · ${escapeHtml(scene.id)}</div>
     `;
 
     const sections = [
@@ -2396,8 +2261,8 @@
       { label: '٠٣ · الغاية السردية', title: 'Narrative Purpose', content: spec.narrative_purpose },
       { label: '٠٤ · نص السرد', title: 'Narration Script (AR)', content: spec.narration_script_ar },
       { label: '٠٥ · الخط الزمني للحركة', title: 'Animation Timeline', content: Array.isArray(spec.animation_timeline)
-        ? spec.animation_timeline.map(t => `<div class="timeline-entry"><span class="timeline-time">${t.time}</span><span>${t.action}</span></div>`).join('')
-        : spec.animation_timeline },
+        ? spec.animation_timeline.map(t => `<div class="timeline-entry"><span class="timeline-time">${escapeHtml(t.time)}</span><span>${escapeHtml(t.action)}</span></div>`).join('')
+        : escapeHtml(spec.animation_timeline), html: true },
       { label: '٠٦ · التوجيه البصري', title: 'Visual Direction', content: spec.visual_direction },
       { label: '٠٧ · نوع التفاعل', title: 'Recommended Interaction', content: spec.interaction_type },
       { label: '٠٨ · منطق التفاعل', title: 'Interaction Logic', content: spec.interaction_logic },
@@ -2406,7 +2271,7 @@
       { label: '١١ · التغذية الخاطئة', title: 'Incorrect Feedback', content: spec.incorrect_feedback },
       { label: '١٢ · ملاحظات التنفيذ', title: 'Implementation Notes', content: spec.implementation_notes },
       { label: '١٣ · توافق SCORM', title: 'SCORM Compatibility', content: spec.scorm_notes },
-      { label: '١٤ · هيكل JSON', title: 'JSON Structure', content: `<code>${escapeHtml(spec.json_structure)}</code>` },
+      { label: '١٤ · هيكل JSON', title: 'JSON Structure', content: `<code>${escapeHtml(spec.json_structure)}</code>`, html: true },
       { label: '١٥ · معمارية HTML/CSS/JS', title: 'Architecture Suggestions', content: spec.architecture_notes },
     ];
 
@@ -2415,7 +2280,7 @@
         <div class="notes-section">
           <div class="notes-section-label">${s.label}</div>
           <div class="notes-section-title">${s.title}</div>
-          <div class="notes-section-content">${s.content}</div>
+          <div class="notes-section-content">${s.html ? s.content : escapeHtml(formatSpec(s.content))}</div>
         </div>
       `;
     });
@@ -2423,13 +2288,19 @@
     body.innerHTML = html;
     document.getElementById('notes-drawer').classList.add('visible');
     document.getElementById('notes-backdrop').classList.add('visible');
-    document.getElementById('notes-drawer').setAttribute('aria-hidden', 'false');
+    document.getElementById('notes-drawer').inert = false;
+  }
+
+  // Spec fields are strings or arrays of lines; show arrays one per line.
+  function formatSpec(v) {
+    if (Array.isArray(v)) return v.join('\n');
+    return v === undefined || v === null ? '' : String(v);
   }
 
   function closeNotes() {
     document.getElementById('notes-drawer').classList.remove('visible');
     document.getElementById('notes-backdrop').classList.remove('visible');
-    document.getElementById('notes-drawer').setAttribute('aria-hidden', 'true');
+    document.getElementById('notes-drawer').inert = true;
   }
 
   // ---------- Toast ----------
@@ -2490,6 +2361,8 @@
   function renderAssessmentResult(scene, answerIdx) {
     if (answerIdx === null || answerIdx === undefined) return;
     const correct = answerIdx === scene.assessment.correct_index;
+    const options = document.getElementById('assessment-options');
+    if (options) options.dataset.locked = '1';
     const opts = document.querySelectorAll('#assessment-options .assessment-option');
     opts.forEach((o, i) => {
       o.classList.add('locked');
@@ -2520,59 +2393,54 @@
   // On correct: shows "التالي" (or "أكملت الرحلة" on last scene) → advances.
   // On wrong:   shows "حاول مرة أخرى" → calls resetAssessmentInPlace.
   function showAdvanceOrRetryCTA(scene, correct) {
+    if (!correct) {
+      showCTA('حاول مرة أخرى', 'راجع الإجابة الصحيحة ثم تابع', () => resetAssessmentInPlace(), 'cta-next');
+      return;
+    }
     const isLastScene = state.currentScreen >= CONTENT.screens.length - 1;
-    const ctaZone = $ctaZone();
-    ctaZone.classList.remove('empty');
-    ctaZone.innerHTML = `
-      <button class="cta-primary" id="cta-next" type="button">
-        <span>${correct ? (isLastScene ? 'عرض النتيجة' : 'التالي') : 'حاول مرة أخرى'}</span>
-        <span class="cta-arrow">←</span>
-      </button>
-      <div class="cta-hint">${correct ? (isLastScene ? 'تهانينا على إتمام الرحلة' : 'انتقل إلى المشهد التالي') : 'راجع الإجابة الصحيحة ثم تابع'}</div>
-    `;
-    setTimeout(() => {
-      const btn = document.getElementById('cta-next');
-      btn.classList.add('visible');
-      const h = ctaZone.querySelector('.cta-hint');
-      if (h) h.classList.add('visible');
-      btn.addEventListener('click', () => {
-        if (correct) {
-          if (isLastScene) {
-            showCompletionScreen();
-          } else {
-            state.currentScreen++;
-            saveState();
-            renderScene(state.currentScreen);
-          }
-        } else {
-          resetAssessmentInPlace(scene);
-        }
-      });
-    }, 100);
+    showCTA(
+      isLastScene ? 'عرض النتيجة' : 'التالي',
+      isLastScene ? 'تهانينا على إتمام الرحلة' : 'انتقل إلى المشهد التالي',
+      () => { if (isLastScene) finishCourse(); else goToScene(state.currentScreen + 1); },
+      'cta-next'
+    );
   }
 
-  // ---------- Completion Screen ----------
-  // Shown when the learner finishes all 7 scenes. Displays final score,
-  // pass/fail status, completion date, and a print button for compliance
-  // records. Previously the learner only saw a 3-second toast — inadequate
-  // for compliance training where proof of completion is required.
-  function showCompletionScreen() {
+  // ---------- Course completion ----------
+  // finishCourse() RECORDS the completion (once per run through the course);
+  // showCompletionScreen() only DISPLAYS it and may be called any number of
+  // times (after review mode, on relaunch). Keeping them apart is what keeps
+  // the audited completion date from moving.
+  function finishCourse() {
     const score = Scoring.compute();
     const passingScore = CONTENT.course.passing_score || 70;
     const passed = score >= passingScore;
 
-    // Stamp the completion record with the current content version.
-    // This must happen before SCORM status is set so the record is persisted.
     if (window.Version) Version.stampCompletion(score);
     saveState();
 
-    // Set final SCORM status
-    if (passed) {
-      window.ScormApi.setStatus('completed');
-      window.ScormApi.setStatus('passed');
-    } else {
-      window.ScormApi.setStatus('completed');
-    }
+    Scoring.commit();
+    window.ScormApi.setStatus(passed ? 'passed' : 'failed');
+    // The attempt is over: the LMS no longer needs to keep suspend_data.
+    window.ScormApi.setExit('');
+    window.ScormApi.commitNow();
+
+    showCompletionScreen();
+  }
+
+  // SCORM 1.2 gives the name as "Last, First"; show it the natural way.
+  function formatStudentName(raw) {
+    const name = String(raw || '').trim();
+    if (!name.includes(',')) return name;
+    const [last, first] = name.split(',').map(p => p.trim());
+    return [first, last].filter(Boolean).join(' ');
+  }
+
+  function showCompletionScreen() {
+    const record = (window.Version && Version.getCompletion()) || null;
+    const score = record && typeof record.score === 'number' ? record.score : Scoring.compute();
+    const passingScore = CONTENT.course.passing_score || 70;
+    const passed = score >= passingScore;
 
     // Cancel any in-flight narration
     if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
@@ -2580,9 +2448,8 @@
     Narrator.hideNarrator();
     Animator.clear();
 
-    // Exit review mode if active
-    state.reviewMode = false;
-    document.body.classList.remove('review-mode');
+    // Leaving review mode restores the learner's real position.
+    leaveReviewMode();
 
     // Hide subtitle bar and CTA zone
     document.getElementById('subtitle-bar').classList.remove('visible', 'controls-visible');
@@ -2593,22 +2460,27 @@
     // Build completion screen
     const stage = $stage();
     stage.style.opacity = '1';
+    stage.dataset.scene = 'completion';
     document.body.classList.remove('cinematic');
+    $topbar().classList.add('visible');
 
-    const now = new Date();
-    const dateStr = now.toLocaleDateString('ar-SA-u-ca-gregory', {
+    const completedOn = record && record.date ? new Date(record.date) : new Date();
+    const dateStr = completedOn.toLocaleDateString('ar-SA-u-ca-gregory', {
       year: 'numeric', month: 'long', day: 'numeric',
     });
 
-    const studentName = window.ScormApi.getStudentName() || 'المتعلم';
-    const versionLabel = window.Version ? Version.label() : '';
+    const studentName = formatStudentName(window.ScormApi.getStudentName()) || 'المتعلم';
+    const versionLabel = record && record.version
+      ? 'إصدار ' + arabicNumeral(record.version)
+      : (window.Version ? Version.label() : '');
     const staleNotice = window.Version && Version.isStale()
-      ? `<div class="completion-stale-notice">أكملت نسخة سابقة من المحتوى. يوصى بمراجعة النسخة المحدّثة.</div>`
+      ? `<div class="completion-stale-notice">أكملت نسخة سابقة من المحتوى. يوصى بمراجعة النسخة المحدّثة (${escapeHtml(Version.label())}).</div>`
       : '';
+    const completedCount = countCompletedScenes();
 
     stage.innerHTML = `
-      <div class="completion-screen" role="main" aria-live="polite">
-        <div class="completion-seal ${passed ? 'pass' : 'fail'}">
+      <div class="completion-screen" aria-live="polite">
+        <div class="completion-seal ${passed ? 'pass' : 'fail'}" aria-hidden="true">
           <svg viewBox="0 0 80 80" width="64" height="64">
             <circle cx="40" cy="40" r="36" fill="none" stroke="${passed ? '#81C784' : '#E57373'}" stroke-width="3"/>
             ${passed ? '<path d="M 24 40 L 35 51 L 56 28" stroke="#81C784" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' : '<path d="M 28 28 L 52 52 M 52 28 L 28 52" stroke="#E57373" stroke-width="4" stroke-linecap="round"/>'}
@@ -2638,7 +2510,7 @@
           </div>
           <div class="completion-meta-row">
             <span class="completion-meta-label">المشاهد المكتملة</span>
-            <span class="completion-meta-value">${arabicNumeral(Object.keys(state.sceneScores || {}).length)} من ${arabicNumeral(CONTENT.screens.length)}</span>
+            <span class="completion-meta-value">${arabicNumeral(completedCount)} من ${arabicNumeral(CONTENT.screens.length)}</span>
           </div>
           <div class="completion-meta-row">
             <span class="completion-meta-label">إصدار المحتوى</span>
@@ -2678,16 +2550,8 @@
 
     // Wire buttons
     document.getElementById('completion-print').addEventListener('click', () => window.print());
-    document.getElementById('completion-review').addEventListener('click', () => {
-      // Enter review mode and go to the Learning Hub
-      enterReviewMode();
-      openLearningHub();
-    });
-    document.getElementById('completion-restart').addEventListener('click', () => {
-      if (confirm('هل تريد إعادة الرحلة من البداية؟ سيتم مسح تقدّمك الحالي.')) {
-        restartCourse();
-      }
-    });
+    document.getElementById('completion-review').addEventListener('click', () => openLearningHub());
+    document.getElementById('completion-restart').addEventListener('click', restartCourse);
   }
 
   // ---------- Review Mode ----------
@@ -2701,18 +2565,27 @@
   // their completion record.
 
   function enterReviewMode() {
+    if (!state.reviewMode) state.bookmark = state.currentScreen;
     state.reviewMode = true;
     document.body.classList.add('review-mode');
+    document.getElementById('review-banner').inert = false;
   }
 
-  function exitReviewMode() {
+  // Turns review mode off and puts the learner back at their real position
+  // (state only; callers decide what to render).
+  function leaveReviewMode() {
+    if (state.reviewMode) state.currentScreen = state.bookmark;
     state.reviewMode = false;
     document.body.classList.remove('review-mode');
-    // If the completion screen was the last thing shown before review, return
-    // to it. Otherwise just clear the review banner and stay on the current scene.
-    if (state.completion) {
-      showCompletionScreen();
-    }
+    document.getElementById('review-banner').inert = true;
+  }
+
+  // The banner's "exit review" button: back to the result screen if the
+  // course is finished, otherwise back to where the learner left off.
+  function exitReviewMode() {
+    leaveReviewMode();
+    if (state.completion) showCompletionScreen();
+    else renderScene(state.currentScreen);
   }
 
   // ---------- Learning Hub ----------
@@ -2787,9 +2660,7 @@
 
     // Build hub content
     const glossary = buildGlossary();
-    const totalScenes = CONTENT.screens.length;
-    const completedScenes = Object.keys(state.sceneScores || {}).length;
-    const canReview = state.completion || completedScenes > 0;
+    const canReview = !!state.completion || countCompletedScenes() > 0;
 
     // Glossary entries (searchable list)
     const glossaryHtml = glossary.map((entry, i) => `
@@ -2856,31 +2727,31 @@
     document.querySelectorAll('.hub-scene-item').forEach(btn => {
       if (btn.disabled) return;
       btn.addEventListener('click', () => {
-        const idx = parseInt(btn.dataset.hubSceneIdx, 10);
         if (!canReview) return;
-        // Enter review mode, close hub, jump to scene
-        enterReviewMode();
         closeLearningHub();
-        if (window.NarrationManager) NarrationManager.cancel(); else if (window.TTS) TTS.cancel();
-        Narrator.skipRequested = true;
-        state.currentScreen = idx;
-        // In review mode we DON'T reset scene state — the learner keeps their
-        // progress. We just re-render the scene so it plays fresh visually.
-        renderScene(idx);
-        showToast('وضع المراجعة — لن تؤثر تصرفاتك على درجتك', 'success');
+        // Review mode keeps the scene's saved answers and never scores.
+        if (goToScene(parseInt(btn.dataset.hubSceneIdx, 10), { review: true })) {
+          showToast('وضع المراجعة — لن تؤثر تصرفاتك على درجتك', 'success');
+        }
       });
     });
 
     hub.classList.add('visible');
     backdrop.classList.add('visible');
-    hub.setAttribute('aria-hidden', 'false');
+    hub.inert = false;
+    const closeBtn = document.getElementById('learning-hub-close');
+    if (closeBtn) closeBtn.focus();
   }
 
   function closeLearningHub() {
     const hub = document.getElementById('learning-hub');
     const backdrop = document.getElementById('learning-hub-backdrop');
-    if (hub) { hub.classList.remove('visible'); hub.setAttribute('aria-hidden', 'true'); }
+    if (!hub) return;
+    const hadFocus = hub.contains(document.activeElement);
+    hub.classList.remove('visible');
+    hub.inert = true;
     if (backdrop) backdrop.classList.remove('visible');
+    if (hadFocus) document.getElementById('hub-toggle').focus();
   }
 
   function bindLearningHub() {

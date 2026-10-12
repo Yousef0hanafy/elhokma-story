@@ -77,8 +77,23 @@
 
   function set(k, v) {
     if (SCORM.isStandalone || !SCORM.api) { setLocal(k, v); return true; }
-    try { return SCORM.api.LMSSetValue(k, String(v)); }
-    catch (e) { console.warn('[SCORM] LMSSetValue failed:', k, e); return false; }
+    try {
+      const r = SCORM.api.LMSSetValue(k, String(v));
+      if (r === 'true' || r === true) return true;
+      reportLmsError('LMSSetValue ' + k);
+      return false;
+    } catch (e) { console.warn('[SCORM] LMSSetValue failed:', k, e); return false; }
+  }
+
+  // A rejected write is silent in SCORM 1.2 unless we ask. Log the LMS's own
+  // error code and text so an administrator can see why data went missing.
+  function reportLmsError(context) {
+    try {
+      const code = SCORM.api.LMSGetLastError();
+      if (!code || String(code) === '0') return;
+      const text = SCORM.api.LMSGetErrorString ? SCORM.api.LMSGetErrorString(code) : '';
+      console.warn(`[SCORM] ${context} rejected by LMS: ${code} ${text}`);
+    } catch (e) { /* the LMS cannot even report errors — nothing more to do */ }
   }
 
   // Debounced commit — collapses rapid setSuspendData() calls into one LMSCommit.
@@ -89,8 +104,10 @@
     if (commitTimer) clearTimeout(commitTimer);
     commitTimer = setTimeout(() => {
       commitTimer = null;
-      try { SCORM.api.LMSCommit(''); }
-      catch (e) { console.warn('[SCORM] LMSCommit failed:', e); }
+      try {
+        const r = SCORM.api.LMSCommit('');
+        if (!(r === 'true' || r === true)) reportLmsError('LMSCommit');
+      } catch (e) { console.warn('[SCORM] LMSCommit failed:', e); }
     }, COMMIT_DEBOUNCE_MS);
     return true;
   }
@@ -135,7 +152,23 @@
 
   // ---------- High-level helpers ----------
   const getStatus = () => get('cmi.core.lesson_status') || 'not attempted';
-  const setStatus = (s) => { set('cmi.core.lesson_status', s); commit(); };
+  // Never downgrade a finished record: an LMS report must not lose a 'passed'
+  // because the learner restarted the course to review it.
+  const FINAL = ['passed', 'completed', 'failed'];
+  const setStatus = (s) => {
+    const current = getStatus();
+    if (current === 'passed' && s !== 'passed') return false;
+    if (FINAL.includes(current) && !FINAL.includes(s)) return false;
+    set('cmi.core.lesson_status', s);
+    commit();
+    return true;
+  };
+  const isFinished = () => FINAL.includes(getStatus());
+  // cmi.core.exit decides whether the LMS keeps suspend_data for the next
+  // launch: 'suspend' while the course is unfinished, '' once it is done.
+  const setExit = (v) => { set('cmi.core.exit', v); commit(); };
+  // lesson_location: a short bookmark that LMS reports can show (≤255 chars).
+  const setLocation = (loc) => { set('cmi.core.lesson_location', String(loc).slice(0, 255)); };
   const getScore = () => {
     const r = get('cmi.core.score.raw');
     if (r === '' || r === null || r === undefined) return null;
@@ -226,6 +259,7 @@
     init, get, set, commit, commitNow, finish,
     getStatus, setStatus, getScore, setScore,
     getSuspendData, setSuspendData, getStudentName,
+    setExit, setLocation, isFinished,
     isStandalone: () => SCORM.isStandalone,
     isInitialized: () => SCORM.initialized,
   };

@@ -1,0 +1,326 @@
+/**
+ * End-to-end tests: run the real course in Chromium against a mock LMS.
+ *
+ * These cover what the unit tests cannot: scene flow, gating, scoring as the
+ * LMS sees it, resume after relaunch, review mode, and SCORM calls.
+ *
+ * Run:  npm run test:e2e
+ * Uses PLAYWRIGHT_CHROMIUM_PATH if set (e.g. a preinstalled Chromium).
+ */
+const { chromium } = require('playwright');
+const { test, assert, assertEqual, run } = require('../harness');
+const { start } = require('./server');
+const { installMockLms } = require('./mock-lms');
+
+let server, baseUrl, browser;
+
+async function newPage({ lms = true, reducedMotion = true } = {}) {
+  const context = await browser.newContext({ reducedMotion: reducedMotion ? 'reduce' : 'no-preference' });
+  // Block third-party requests: the course must work fully offline / inside
+  // a locked-down hospital network.
+  await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, route => route.abort());
+  if (lms) await context.addInitScript(installMockLms);
+  const page = await context.newPage();
+  page.errors = [];
+  page.on('pageerror', e => page.errors.push('PageError: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') page.errors.push('ConsoleError: ' + m.text()); });
+  page.on('dialog', d => { page.errors.push('Native dialog opened: ' + d.message()); d.dismiss(); });
+  return page;
+}
+
+async function open(page) {
+  await page.goto(baseUrl, { waitUntil: 'load' });
+  await page.waitForFunction(() => document.getElementById('loader').classList.contains('hidden'), null, { timeout: 10000 });
+  await page.waitForFunction(() => document.getElementById('stage').dataset.scene, null, { timeout: 10000 });
+}
+
+async function dismissAudioOverlay(page) {
+  await page.waitForSelector('#tts-activation.visible', { timeout: 5000 });
+  await page.click('#tts-skip-btn');
+  await page.waitForSelector('#tts-activation:not(.visible)');
+}
+
+const sceneId = page => page.evaluate(() => document.getElementById('stage').dataset.scene);
+const content = page => page.evaluate(() => window.STORY_CONTENT);
+const lmsValue = (page, k) => page.evaluate(key => window.__lms.cmi[key], k);
+
+async function waitScene(page, id) {
+  await page.waitForFunction(i => document.getElementById('stage').dataset.scene === i, id, { timeout: 10000 });
+}
+
+async function skipNarration(page) {
+  await page.waitForFunction(() => {
+    const b = document.getElementById('skip-btn');
+    return b && !b.disabled;
+  }, null, { timeout: 10000 });
+  await page.click('#skip-btn');
+}
+
+async function closeModal(page) {
+  await page.waitForSelector('.seat-modal.visible .seat-modal-close');
+  await page.click('.seat-modal.visible .seat-modal-close');
+  await page.waitForFunction(() => !document.querySelector('.seat-modal.visible'));
+}
+
+async function exploreAll(page, selector) {
+  const n = await page.locator(selector).count();
+  for (let i = 0; i < n; i++) {
+    await page.locator(selector).nth(i).click();
+    await closeModal(page);
+  }
+}
+
+async function answer(page, idx) {
+  await page.waitForSelector('#assessment-panel.visible');
+  await page.click(`#assessment-options .assessment-option[data-idx="${idx}"]`);
+}
+
+async function clickNext(page) {
+  await page.waitForSelector('#cta-next.visible', { timeout: 6000 });
+  await page.click('#cta-next');
+}
+
+// Plays the current scene to its end. `wrongFirst` answers the MCQ (or the
+// first dilemma phase) wrong once, then retries correctly.
+async function playScene(page, opts = {}) {
+  const id = await sceneId(page);
+  await playSceneSteps(page, id, opts);
+  // Wait for the transition so the next call sees the next scene.
+  await page.waitForFunction(i => document.getElementById('stage').dataset.scene !== i, id, { timeout: 10000 });
+}
+
+async function playSceneSteps(page, id, { wrongFirst = false } = {}) {
+  const c = await content(page);
+  const scene = c.screens.find(s => s.id === id);
+  const correct = scene.assessment ? scene.assessment.correct_index : null;
+  const wrong = correct === 0 ? 1 : 0;
+
+  await skipNarration(page);
+  if (id === 'opening') {
+    await page.waitForSelector('#cta-btn.visible');
+    await page.click('#cta-btn');
+    return;
+  }
+  if (id === 'boardroom') await exploreAll(page, '.seat');
+  if (id === 'framework') await exploreAll(page, '.framework-layer');
+  if (id === 'integrity') await exploreAll(page, '.integrity-star');
+  if (id === 'pillars') {
+    await page.click('#pillar-gov');
+    await page.click('#pillar-comp');
+  }
+  if (id === 'court') {
+    for (const cs of scene.cases) {
+      await page.waitForSelector(`#court-card-${cs.n} .court-btn[data-choice="${cs.classification}"]:not([disabled])`, { timeout: 8000 });
+      await page.click(`#court-card-${cs.n} .court-btn[data-choice="${cs.classification}"]`);
+    }
+  }
+  if (id === 'dilemma') {
+    for (const ph of scene.phases) {
+      const good = ph.options.findIndex(o => o.correct);
+      const bad = ph.options.findIndex(o => !o.correct);
+      await page.waitForSelector(`#dilemma-card-${ph.n} .dilemma-option:not([disabled])`);
+      if (wrongFirst && ph.n === 1) {
+        await page.click(`#dilemma-card-${ph.n} .dilemma-option[data-idx="${bad}"]`);
+        await page.click('#dl-retry');
+      }
+      await page.click(`#dilemma-card-${ph.n} .dilemma-option[data-idx="${good}"]`);
+      await page.click(ph.n < scene.phases.length ? '#dl-next' : '#dl-finish');
+    }
+    await page.waitForSelector('.completion-screen', { timeout: 6000 });
+    return;
+  }
+  if (wrongFirst) {
+    await answer(page, wrong);
+    await clickNext(page); // "try again"
+  }
+  await answer(page, correct);
+  await clickNext(page);
+}
+
+// ---------------------------------------------------------------------------
+
+test('Boots with no errors, CSP, skip link, modules, no third-party requests', async () => {
+  const page = await newPage();
+  await open(page);
+  assert((await page.title()).includes('رحلة الحوكمة'), 'title');
+  assert(await page.evaluate(() => !!document.querySelector('meta[http-equiv="Content-Security-Policy"]')), 'CSP meta present');
+  assert(await page.evaluate(() => !!document.querySelector('.skip-link')), 'skip link present');
+  const missing = await page.evaluate(() => ['ErrorBoundary', 'ScormApi', 'Scoring', 'Version', 'TTS', 'NarrationManager', 'Narrator', 'Animator', 'ModalManager']
+    .filter(m => !window[m]));
+  assertEqual(missing.length, 0, 'modules missing: ' + missing.join(','));
+  assertEqual(await page.evaluate(() => window.ScormApi.isStandalone()), false, 'LMS detected');
+  assertEqual(await lmsValue(page, 'cmi.core.lesson_status'), 'incomplete', 'status set to incomplete on launch');
+  assertEqual(await lmsValue(page, 'cmi.core.exit'), 'suspend', 'exit=suspend while in progress');
+  const fonts = await page.evaluate(() => [...document.styleSheets].map(s => s.href || '').filter(h => h.includes('googleapis')));
+  assertEqual(fonts.length, 0, 'no Google Fonts stylesheet');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('Alt+Arrow cannot skip an unfinished scene', async () => {
+  const page = await newPage();
+  await open(page);
+  await dismissAudioOverlay(page);
+  for (const key of ['Alt+ArrowLeft', 'Alt+ArrowRight', 'Alt+ArrowLeft']) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(300);
+  }
+  assertEqual(await sceneId(page), 'opening', 'still on the opening scene');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('Seat modal traps focus and keeps loader aria-hidden', async () => {
+  const page = await newPage();
+  await open(page);
+  await dismissAudioOverlay(page);
+  await playScene(page);
+  await waitScene(page, 'boardroom');
+  await skipNarration(page);
+  await page.click('#seat-1');
+  await page.waitForSelector('.seat-modal.visible');
+  await page.waitForTimeout(100);
+  assert(await page.evaluate(() => document.querySelector('.seat-modal').contains(document.activeElement)), 'focus inside modal');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.seat-modal.visible'));
+  assertEqual(await page.evaluate(() => document.getElementById('loader').getAttribute('aria-hidden')), 'true', 'loader aria-hidden preserved');
+  await page.context().close();
+});
+
+test('Perfect run scores 100, passes, and records one completion', async () => {
+  const page = await newPage();
+  await open(page);
+  await dismissAudioOverlay(page);
+  const total = (await content(page)).screens.length;
+  for (let i = 0; i < total; i++) await playScene(page);
+
+  assertEqual(await lmsValue(page, 'cmi.core.score.raw'), '100', 'LMS score');
+  assertEqual(await lmsValue(page, 'cmi.core.lesson_status'), 'passed', 'LMS status');
+  assertEqual(await lmsValue(page, 'cmi.core.exit'), '', 'exit cleared after completion');
+  const meta = await page.evaluate(() => document.querySelector('.completion-meta').textContent);
+  assert(meta.includes('٧ من ٧'), 'completion screen shows 7 of 7 scenes, got: ' + meta.replace(/\s+/g, ' '));
+  const stamp1 = await page.evaluate(() => window.Version.getCompletion());
+  assert(stamp1 && stamp1.score === 100, 'completion stamped with score 100');
+
+  // Review mode, then exit: completion record must not be re-stamped.
+  await page.waitForTimeout(20);
+  await page.click('#completion-review');
+  await page.waitForSelector('#learning-hub.visible');
+  await page.click('.hub-scene-item[data-hub-scene-idx="1"]');
+  await waitScene(page, 'boardroom');
+  assert(await page.evaluate(() => document.body.classList.contains('review-mode')), 'review mode on');
+  await page.click('#review-exit-btn');
+  await page.waitForSelector('.completion-screen');
+  const stamp2 = await page.evaluate(() => window.Version.getCompletion());
+  assertEqual(stamp2.date, stamp1.date, 'completion date unchanged after review');
+
+  // Restart uses an in-page dialog (native confirm is blocked in LMS iframes)
+  // and must never downgrade the LMS status.
+  await page.click('#completion-restart');
+  await page.waitForSelector('.seat-modal.visible [data-confirm="yes"]');
+  await page.click('.seat-modal.visible [data-confirm="yes"]');
+  await waitScene(page, 'opening');
+  assertEqual(await lmsValue(page, 'cmi.core.lesson_status'), 'passed', 'status not downgraded by restart');
+
+  const lmsErrors = await page.evaluate(() => window.__lms.errors);
+  assertEqual(lmsErrors.length, 0, 'LMS rejected writes: ' + JSON.stringify(lmsErrors));
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('First attempt counts: a wrong answer then a right one scores 0 for that scene', async () => {
+  const page = await newPage();
+  await open(page);
+  await dismissAudioOverlay(page);
+  await playScene(page);                        // opening
+  await playScene(page, { wrongFirst: true });  // boardroom
+  await waitScene(page, 'framework');
+  assertEqual(await lmsValue(page, 'cmi.core.score.raw'), '0', 'score after wrong first attempt');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('Relaunch resumes the scene and offers a way forward on an answered scene', async () => {
+  const page = await newPage();
+  await open(page);
+  await dismissAudioOverlay(page);
+  await playScene(page); // opening
+  await waitScene(page, 'boardroom');
+  await skipNarration(page);
+  await exploreAll(page, '.seat');
+  await answer(page, (await content(page)).screens[1].assessment.correct_index);
+  await page.waitForTimeout(300);
+  // Simulate the learner closing the window and relaunching from the LMS.
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => document.getElementById('stage').dataset.scene === 'boardroom', null, { timeout: 10000 });
+  assertEqual(await lmsValue(page, 'cmi.core.entry'), 'resume', 'LMS entry=resume');
+  await page.waitForSelector('#cta-next.visible', { timeout: 5000 });
+  await page.click('#cta-next');
+  await waitScene(page, 'framework');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('Reviewing a finished scene does not leak review mode into new work', async () => {
+  const page = await newPage();
+  await open(page);
+  await dismissAudioOverlay(page);
+  await playScene(page); // opening
+  await playScene(page); // boardroom
+  await waitScene(page, 'framework');
+  await page.click('#hub-toggle');
+  await page.click('.hub-scene-item[data-hub-scene-idx="1"]');
+  await waitScene(page, 'boardroom');
+  assert(await page.evaluate(() => document.body.classList.contains('review-mode')), 'review mode on');
+  await page.click('#menu-toggle');
+  await page.click('.scene-item[data-scene-idx="2"]');
+  await waitScene(page, 'framework');
+  assert(!(await page.evaluate(() => document.body.classList.contains('review-mode'))), 'review mode off on unfinished scene');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('Leaving a scene cancels its pending timers', async () => {
+  const page = await newPage();
+  await open(page);
+  await dismissAudioOverlay(page);
+  await playScene(page); // opening
+  await waitScene(page, 'boardroom');
+  await skipNarration(page);
+  await exploreAll(page, '.seat');
+  await answer(page, 0);
+  // Leave before the 2s "next / try again" CTA timer fires.
+  await page.click('#menu-toggle');
+  await page.click('.scene-item[data-scene-idx="0"]');
+  await waitScene(page, 'opening');
+  await page.waitForTimeout(2600);
+  assertEqual(await page.locator('#cta-next').count(), 0, 'stale CTA from previous scene not shown');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('Standalone (no LMS): loads, saves progress to localStorage', async () => {
+  const page = await newPage({ lms: false });
+  await open(page);
+  await dismissAudioOverlay(page);
+  assertEqual(await page.evaluate(() => window.ScormApi.isStandalone()), true, 'standalone');
+  await playScene(page);
+  await waitScene(page, 'boardroom');
+  await page.waitForTimeout(800);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('scorm_gov_story_v1') || '{}')['cmi.suspend_data']);
+  assert(saved && JSON.parse(saved).currentScreen === 1, 'progress saved locally');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+(async () => {
+  ({ server, url: baseUrl } = await start());
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined;
+  browser = await chromium.launch({ executablePath });
+  try {
+    await run();
+  } finally {
+    await browser.close();
+    server.close();
+  }
+})();

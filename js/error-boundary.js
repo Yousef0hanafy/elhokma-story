@@ -35,8 +35,8 @@
 
     global.addEventListener('unhandledrejection', (e) => {
       const reason = e && e.reason;
-      const msg = reason && (reason.message || reason.toString()) || 'Unhandled promise rejection';
-      // Font load failures, TTS init issues — non-fatal. Just log.
+      // Font load failures, TTS init issues — non-fatal. Record and log.
+      record(reason, 'unhandledrejection');
       console.warn('[UnhandledRejection]', reason);
     });
   }

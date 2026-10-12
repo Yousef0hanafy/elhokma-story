@@ -1,10 +1,11 @@
 /**
  * ModalManager — centralizes modal lifecycle: focus trap, ESC, backdrop,
- * and aria-hidden on the rest of the page.
+ * and inert on the rest of the page.
  *
  * Why: the three seat/layer/star modals in app.js each rolled their own
  * keydown/click handlers and never moved focus into the modal or restored
  * it on close — a real a11y gap. This module fixes that with one API.
+ * While a modal is open, everything else on the page is `inert`.
  *
  * API:
  *   ModalManager.open({ content, onClose })  // opens a modal, traps focus
@@ -44,16 +45,16 @@
     document.body.appendChild(overlay);
     document.body.classList.add('modal-open');
 
-    // Hide the rest of the page from screen readers.
-    // CRITICAL: only set aria-hidden on elements that don't ALREADY have it.
-    // The loader, letterbox bars, etc. start with aria-hidden="true" in the
-    // HTML. If we blindly removeAttribute on close, we'd corrupt their
-    // original state. We track which elements WE modified via a data
-    // attribute and only restore those.
+    // Make the rest of the page inert (no focus, no clicks, hidden from
+    // screen readers). Elements that were ALREADY inert (closed drawers)
+    // are left alone and stay inert on close; we only restore what we set.
+    // aria-hidden is deliberately not used: it must never sit on a
+    // container with focusable children, and it would clobber the
+    // aria-hidden the loader and decorative layers already carry.
     document.querySelectorAll('body > *:not(.seat-modal)').forEach(el => {
-      if (el.id === 'toast') return;
-      if (el.getAttribute('aria-hidden') === 'true') return; // already hidden — leave it alone
-      el.setAttribute('aria-hidden', 'true');
+      if (el.id === 'toast' || el.tagName === 'SCRIPT') return;
+      if (el.inert) return;
+      el.inert = true;
       el.dataset.modalHidden = '1';
     });
 
@@ -113,9 +114,9 @@
     document.removeEventListener('keydown', ModalManager.keyHandler);
     ModalManager.keyHandler = null;
 
-    // Restore aria-hidden
+    // Restore only what open() made inert
     document.querySelectorAll('[data-modal-hidden="1"]').forEach(el => {
-      el.removeAttribute('aria-hidden');
+      el.inert = false;
       delete el.dataset.modalHidden;
     });
 

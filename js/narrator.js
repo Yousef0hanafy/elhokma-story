@@ -122,7 +122,6 @@
     $sub.classList.remove('done');
     $sub.innerHTML = '<span class="cursor"></span>';
     const text = seg.text;
-    const cursor = $sub.querySelector('.cursor');
     let charIdx = 0;
     // Speed: ~30ms per char for subtitles (faster than cover title)
     const speed = Math.max(20, Math.min(45, 1800 / text.length));
