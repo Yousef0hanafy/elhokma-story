@@ -33,10 +33,8 @@
       <title>رحلة الحوكمة — الفصل الأول</title>
       <item identifier="ITEM-1" identifierref="RES-1" isvisible="true">
         <title>رحلة الحوكمة — الفصل الأول</title>
-        <adlcp:masteryscore>70</adlcp:masteryscore>
-        <adlcp:maxtimeallowed>02:00:00</adlcp:maxtimeallowed>
-        <adlcp:timelimitaction>exit,no message</adlcp:timelimitaction>
         <adlcp:datafromlms>course=elhokma_governance_ch1</adlcp:datafromlms>
+        <adlcp:masteryscore>70</adlcp:masteryscore>
       </item>
     </organization>
   </organizations>
@@ -47,6 +45,24 @@
       <file href="favicon.svg"/>
       <file href="manifest.webmanifest"/>
       <file href="sw.js"/>
+      <file href="css/fonts.css"/>
+      <file href="fonts/amiri-400-arabic.woff2"/>
+      <file href="fonts/amiri-400-latin.woff2"/>
+      <file href="fonts/amiri-700-arabic.woff2"/>
+      <file href="fonts/amiri-700-latin.woff2"/>
+      <file href="fonts/cairo-400-arabic.woff2"/>
+      <file href="fonts/cairo-400-latin.woff2"/>
+      <file href="fonts/tajawal-400-arabic.woff2"/>
+      <file href="fonts/tajawal-400-latin.woff2"/>
+      <file href="fonts/tajawal-500-arabic.woff2"/>
+      <file href="fonts/tajawal-500-latin.woff2"/>
+      <file href="fonts/tajawal-700-arabic.woff2"/>
+      <file href="fonts/tajawal-700-latin.woff2"/>
+      <file href="fonts/tajawal-800-arabic.woff2"/>
+      <file href="fonts/tajawal-800-latin.woff2"/>
+      <file href="fonts/tajawal-900-arabic.woff2"/>
+      <file href="fonts/tajawal-900-latin.woff2"/>
+      <file href="fonts/OFL.txt"/>
       <file href="css/style.css"/>
       <file href="css/animations.css"/>
       <file href="css/scenes.css"/>

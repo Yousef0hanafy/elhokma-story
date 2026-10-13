@@ -19,6 +19,15 @@ window.STORY_CONTENT = {
     duration_label: 'تُقدَّر الرحلة بـ ٤٥ دقيقة',
     passing_score: 70,
 
+    // ---------- Scoring policy ----------
+    // 'first_attempt' — the score records the learner's FIRST answer to each
+    //   question (and to each dilemma phase). Learners can still retry to see
+    //   the right answer, but retries do not change the score. Recommended
+    //   for regulated training, where the score must reflect knowledge.
+    // 'best_attempt'  — a later correct answer replaces an earlier wrong one.
+    //   Every learner who persists reaches the maximum score.
+    scoring_policy: 'first_attempt',
+
     // ---------- Course Versioning ----------
     // Semantic version of the CONTENT (not the code). Bump this when
     // narration scripts, assessment questions, or definitions change.
@@ -29,10 +38,10 @@ window.STORY_CONTENT = {
     //  MAJOR — structural change (new/removed scenes, different passing score)
     //  MINOR — content change (reworded questions, updated definitions)
     //  PATCH — typo/fix (no learning-impact change)
-    version: '1.0.0',
+    version: '1.1.0',
 
     // Human-readable release identifier shown on the completion screen.
-    version_label: 'إصدار ١.٠.٠',
+    version_label: 'إصدار ١.١.٠',
   },
 
   // ---------- Audio Narration Manifest ----------
@@ -244,11 +253,11 @@ window.STORY_CONTENT = {
         question: 'في غرفة القرار، مَنْ يضع الرؤية الاستراتيجية ويضمن الامتثال؟',
         options: [
           'اللجان المتخصصة',
-          'مجلس الإدارة',
           'مصفوفة الصلاحيات',
           'الإجراءات اليومية',
+          'مجلس الإدارة',
         ],
-        correct_index: 1,
+        correct_index: 3,
         correct_feedback: 'إجابة صحيحة. مجلس الإدارة هو البوصلة التي توجّه المنشأة نحو أهدافها، دون أن ينغمس في التشغيل اليومي. هذا هو جوهر الحوكمة: توجيه لا تشغيل.',
         incorrect_feedback: 'لِنُراجِع. اللجان تُحلّل، والمصفوفة تضبط، والإجراءات تُنفّذ. لكن مَن يضع الرؤية الاستراتيجية هو مجلس الإدارة. توجيه لا تشغيل — هذا هو مبدؤه الأساسي.',
       },
@@ -403,12 +412,12 @@ window.STORY_CONTENT = {
       assessment: {
         question: 'ما الطبقة الأولى التي يجب أن تُبنى في إطار الحوكمة؟',
         options: [
-          'السياسات وآليات الامتثال',
           'القيم والأهداف المؤسسية',
+          'السياسات وآليات الامتثال',
           'هياكل المساءلة والشفافية',
           'التدريب المستمر والتقييم الدوري',
         ],
-        correct_index: 1,
+        correct_index: 0,
         correct_feedback: 'صحيح. القيم والأهداف هي الأساس الذي تنبثق منه كل طبقة لاحقة. بناء الإطار يبدأ دائماً من السؤال: لماذا نحن موجودون؟',
         incorrect_feedback: 'لِنُراجِع. السياسات والمساءلة والتدريب كلها طبقات عليا. الأساس الذي تنبثق منه هو القيم والأهداف المؤسسية — فبدونها لا مرجعية لما يليها.',
       },
@@ -535,11 +544,11 @@ window.STORY_CONTENT = {
         question: 'أيُّ عبارة تصف العلاقة الصحيحة بين الحوكمة والامتثال؟',
         options: [
           'الحوكمة تنفّذ والامتثال يوجّه',
-          'الحوكمة تحدد الإطار والامتثال يضمن التطبيق، وتكاملهما يحقق الاستدامة',
           'الامتثال بديل عن الحوكمة في المنشآت الصغيرة',
+          'الحوكمة تحدد الإطار والامتثال يضمن التطبيق، وتكاملهما يحقق الاستدامة',
           'لا توجد علاقة مباشرة بينهما',
         ],
-        correct_index: 1,
+        correct_index: 2,
         correct_feedback: 'صحيح. الحوكمة تضع الإطار، الامتثال يضمن التطبيق، وتكاملهما يبني الاستدامة. هذا هو مبدأ "الركيزتان" الذي تحمله سقف المنشأة.',
         incorrect_feedback: 'لِنُراجِع. الحوكمة لا تنفّذ بل توجّه. والامتثال ليس بديلاً بل مكمّل. العلاقة الصحيحة: الحوكمة تحدد الإطار، والامتثال يضمن التطبيق، وتكاملهما يحقق الاستدامة.',
       },
@@ -911,8 +920,8 @@ window.STORY_CONTENT = {
           question: 'ما أول إجراء تتخذه؟',
           options: [
             { text: 'لا شيء، وتتصرف كالمعتاد في الاجتماع', correct: false, consequence: 'هذا يُعدّ إخفاءً متعمّداً لتضارب المصالح — مخالفة جسيمة قد تؤدي إلى مساءلة قانونية.' },
-            { text: 'تُبلغ لجنة الامتثال وتتنحى عن القرار', correct: true, consequence: 'الإجراء الصحيح. الإفصاح المبكر + التنحي = حماية للقرار ولسمعتك.' },
             { text: 'تتنحى فقط دون إبلاغ أحد', correct: false, consequence: 'التنحي وحده غير كافٍ — يجب توثيق الحالة وإشراك لجنة الامتثال لمتابعتها.' },
+            { text: 'تُبلغ لجنة الامتثال وتتنحى عن القرار', correct: true, consequence: 'الإجراء الصحيح. الإفصاح المبكر + التنحي = حماية للقرار ولسمعتك.' },
             { text: 'تنتظر حتى ينتهي الاجتماع ثم تبلغ', correct: false, consequence: 'التأخير قد يُفسّر كتردد أو محاولة التأثير على القرار قبل الانسحاب.' },
           ],
         },
@@ -922,8 +931,8 @@ window.STORY_CONTENT = {
           scenario: 'بعد اتخاذك للإجراء الصحيح، حان وقت تحديد طبيعة هذا التضارب بدقة. هذا التحديد سيحدد آلية المعالجة.',
           question: 'ما نوع هذا التضارب؟',
           options: [
-            { text: 'تضارب محتمل (مستقبلي)', correct: false, consequence: 'التضارب المحتمل هو احتمال مستقبلي. أما هنا فالمصلحة قائمة الآن — فهو فعلي.' },
             { text: 'تضارب فعلي (حالي)', correct: true, consequence: 'صحيح. المصلحة المالية موجودة الآن — فهي تضارب فعلي يتطلب معالجة فورية.' },
+            { text: 'تضارب محتمل (مستقبلي)', correct: false, consequence: 'التضارب المحتمل هو احتمال مستقبلي. أما هنا فالمصلحة قائمة الآن — فهو فعلي.' },
             { text: 'ليس تضارباً لأنك لم تتصرف بناءً عليه', correct: false, consequence: 'وجود المصلحة وحده كافٍ — لا يُشترط أن تؤثر فعلياً. التضارب يُقاس بالاحتمال لا بالفعل.' },
             { text: 'تضارب غير مباشر لا يستوجب إجراءً', correct: false, consequence: 'تملك أسهماً مباشرة في شركة متنافسة = تضارب مباشر وفعلي، لا غير مباشر.' },
           ],
@@ -935,9 +944,9 @@ window.STORY_CONTENT = {
           question: 'أيُّ إجراء يمثّل المعالجة الصحيحة الكاملة؟',
           options: [
             { text: 'الإفصاح فقط يكفي', correct: false, consequence: 'الإفصاح شرط ضروري لكنه غير كافٍ — يجب أن يتبعه تنحٍّ وتوثيق.' },
-            { text: 'الإفصاح + التنحي + التوثيق + إشراك لجنة الأخلاقيات', correct: true, consequence: 'الإجراء المتكامل: الإفصاح، التنحي، التوثيق، والإشراف. كل ركن ضروري.' },
             { text: 'التنحي دون توثيق', correct: false, consequence: 'بدون توثيق، لا يمكن للجنة الامتثال متابعة الحالة أو الرقابة لاحقاً.' },
             { text: 'إكمال القرار وتوثيق المصلحة لاحقاً', correct: false, consequence: 'المشاركة في القرار رغم التضارب = مخالفة جسيمة، حتى لو وُثّقت لاحقاً.' },
+            { text: 'الإفصاح + التنحي + التوثيق + إشراك لجنة الأخلاقيات', correct: true, consequence: 'الإجراء المتكامل: الإفصاح، التنحي، التوثيق، والإشراف. كل ركن ضروري.' },
           ],
         },
         {

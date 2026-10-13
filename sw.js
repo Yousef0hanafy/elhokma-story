@@ -15,19 +15,45 @@
  * e-learning module, that means a learner could complete a quiz with buggy
  * old code. Network-first for JS eliminates that risk.
  *
- * In SCORM sandboxed iframes, SW registration may fail — that's fine,
- * the page works without it (just not offline on first load).
+ * Registered only in standalone mode (GitHub Pages / intranet). app.js never
+ * registers it inside an LMS, where it would cache LMS pages on the LMS's
+ * origin and outlive package updates.
+ *
+ * APP_SHELL must list every runtime file; `npm run check:files` enforces it.
+ * Bump CACHE_VERSION on every release.
  */
-const CACHE_VERSION = 'elhokma-v2';
+const CACHE_VERSION = 'elhokma-v3';
 const APP_SHELL = [
   './',
   './index.html',
+  './css/fonts.css',
+  './fonts/amiri-400-arabic.woff2',
+  './fonts/amiri-400-latin.woff2',
+  './fonts/amiri-700-arabic.woff2',
+  './fonts/amiri-700-latin.woff2',
+  './fonts/cairo-400-arabic.woff2',
+  './fonts/cairo-400-latin.woff2',
+  './fonts/tajawal-400-arabic.woff2',
+  './fonts/tajawal-400-latin.woff2',
+  './fonts/tajawal-500-arabic.woff2',
+  './fonts/tajawal-500-latin.woff2',
+  './fonts/tajawal-700-arabic.woff2',
+  './fonts/tajawal-700-latin.woff2',
+  './fonts/tajawal-800-arabic.woff2',
+  './fonts/tajawal-800-latin.woff2',
+  './fonts/tajawal-900-arabic.woff2',
+  './fonts/tajawal-900-latin.woff2',
   './css/style.css',
   './css/animations.css',
   './css/scenes.css',
   './js/error-boundary.js',
   './js/scorm-api.js',
+  './js/scoring.js',
+  './js/version.js',
   './js/tts.js',
+  './js/audio-provider.js',
+  './js/tts-provider.js',
+  './js/narration-manager.js',
   './js/content.js',
   './js/narrator.js',
   './js/animator.js',

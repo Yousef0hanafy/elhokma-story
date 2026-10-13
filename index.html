@@ -22,7 +22,7 @@
   <meta property="og:locale" content="ar_AR">
   <meta property="og:title" content="رحلة الحوكمة — تعلّم سينمائي تفاعلي">
   <meta property="og:description" content="تجربة تعلّم سينمائية تفاعلية بالعربية الفصحى عن الحوكمة في القطاع الصحي. سبعة مشاهد سردية مع سرد صوتي عربي وتوافق SCORM 1.2.">
-  <meta property="og:image" content="preview/01_scene1_cover.png">
+  <meta property="og:image" content="https://yousef0hanafy.github.io/elhokma-story/preview/01_scene1_cover.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="رحلة الحوكمة — تعلّم سينمائي تفاعلي">
   <meta name="twitter:description" content="تجربة تعلّم سينمائية تفاعلية بالعربية الفصحى عن الحوكمة في القطاع الصحي.">
@@ -35,13 +35,9 @@
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="application-name" content="رحلة الحوكمة">
 
-  <!-- Fonts: preconnect warms TLS; the stylesheet itself is loaded
-       asynchronously by app.js (createElement('link')) to avoid blocking
-       first paint and to comply with the CSP (no inline onload handler).
-       CSS has system-font fallbacks so the page is usable immediately. -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-
+  <!-- Fonts are self-hosted (css/fonts.css) so the package is complete
+       offline and inside locked-down LMS networks. -->
+  <link rel="stylesheet" href="css/fonts.css">
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/animations.css">
   <link rel="stylesheet" href="css/scenes.css">
@@ -49,13 +45,13 @@
   <!-- Content Security Policy: restricts script/style/font/image sources
        to defend against XSS even if a content injection slips through.
        - script-src 'self': no inline scripts, no eval, no CDN scripts
-       - style-src 'self' 'unsafe-inline' https://fonts.googleapis.com:
-         inline styles (used by JS for transitions) + Google Fonts stylesheet
-       - font-src 'self' https://fonts.gstatic.com: Google Fonts file delivery
+       - style-src 'self' 'unsafe-inline': inline styles (used by JS for
+         transitions and SVG animation delays)
+       - font-src 'self': self-hosted fonts only
        - img-src 'self' data: inline SVG/data URIs
        - connect-src 'self': no external API calls
        - base-uri 'none', form-action 'none', object-src 'none': hardening -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 </head>
 <body>
 
@@ -80,7 +76,7 @@
   <div class="letterbox letterbox-bottom" id="letterbox-bottom" aria-hidden="true"></div>
 
   <!-- ===== TOP BAR ===== -->
-  <header class="topbar" id="topbar" aria-hidden="true">
+  <header class="topbar" id="topbar">
     <div class="topbar-inner">
       <!-- Right (RTL start): Scene navigation menu -->
       <button class="topbar-btn" id="menu-toggle" type="button" aria-label="قائمة المشاهد">
@@ -93,6 +89,9 @@
       </div>
       <!-- Left (RTL end): Hub + Audio controls -->
       <div class="topbar-audio">
+        <button class="topbar-btn-icon" id="notes-toggle" type="button" aria-label="ملاحظات الإنتاج" title="ملاحظات الإنتاج (وضع التطوير)">
+          <span aria-hidden="true">🎬</span>
+        </button>
         <button class="topbar-btn-icon" id="hub-toggle" type="button" aria-label="مركز التعلم" title="مركز التعلم — المفاهيم والمراجعة">
           <span>✦</span>
         </button>
@@ -107,7 +106,7 @@
   </header>
 
   <!-- ===== REVIEW MODE BANNER (shown only in review mode) ===== -->
-  <div class="review-banner" id="review-banner" aria-hidden="true">
+  <div class="review-banner" id="review-banner" inert>
     <div class="review-banner-inner">
       <span class="review-banner-label">وضع المراجعة — لن تؤثر تصرفاتك على درجتك</span>
       <button class="review-banner-exit" id="review-exit-btn" type="button">إنهاء المراجعة</button>
@@ -115,7 +114,7 @@
   </div>
 
   <!-- ===== SCENE STAGE ===== -->
-  <main class="stage" id="stage" role="main" aria-live="polite">
+  <main class="stage" id="stage" aria-live="polite">
     <!-- Scenes render here -->
   </main>
 
@@ -144,7 +143,7 @@
   <div class="cta-zone" id="cta-zone" aria-live="polite"></div>
 
   <!-- ===== SCENE NAVIGATION DRAWER ===== -->
-  <aside class="scene-drawer" id="scene-drawer" aria-hidden="true" aria-labelledby="scene-drawer-title">
+  <aside class="scene-drawer" id="scene-drawer" inert aria-labelledby="scene-drawer-title">
     <div class="scene-drawer-header">
       <div class="scene-drawer-title" id="scene-drawer-title">رحلتك حتى الآن</div>
       <button class="scene-drawer-close" id="scene-drawer-close" type="button" aria-label="إغلاق">✕</button>
@@ -157,7 +156,7 @@
   <div class="scene-drawer-backdrop" id="scene-drawer-backdrop" aria-hidden="true"></div>
 
   <!-- ===== PRODUCTION NOTES DRAWER (dev mode only) ===== -->
-  <aside class="notes-drawer" id="notes-drawer" aria-hidden="true" aria-labelledby="notes-title">
+  <aside class="notes-drawer" id="notes-drawer" inert aria-labelledby="notes-title">
     <div class="notes-header">
       <div class="notes-title" id="notes-title">🎬 ملاحظات الإنتاج <span class="dev-badge">DEV</span></div>
       <button class="notes-close" id="notes-close" type="button" aria-label="إغلاق">✕</button>
@@ -167,7 +166,7 @@
   <div class="notes-backdrop" id="notes-backdrop" aria-hidden="true"></div>
 
   <!-- ===== TTS ACTIVATION OVERLAY (first scene) ===== -->
-  <div class="tts-activation" id="tts-activation" aria-hidden="true">
+  <div class="tts-activation" id="tts-activation" inert>
     <div class="tts-activation-card">
       <div class="tts-activation-icon">
         <svg viewBox="0 0 60 60" width="48" height="48">
@@ -194,7 +193,7 @@
   </div>
 
   <!-- ===== LEARNING HUB DRAWER ===== -->
-  <aside class="learning-hub" id="learning-hub" aria-hidden="true" aria-labelledby="learning-hub-title">
+  <aside class="learning-hub" id="learning-hub" inert aria-labelledby="learning-hub-title">
     <div class="learning-hub-header">
       <div class="learning-hub-title" id="learning-hub-title">مركز التعلم</div>
       <button class="learning-hub-close" id="learning-hub-close" type="button" aria-label="إغلاق">✕</button>

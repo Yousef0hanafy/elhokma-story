@@ -7,8 +7,9 @@
  * How it works:
  *   - speak(text, audioUrl) creates an <audio> element, loads the URL,
  *     and plays it.
- *   - On error (404, codec issue, network failure), the provider returns
- *     false so NarrationManager falls back to TTS.
+ *   - On error (404, codec issue, network failure, autoplay rejection) the
+ *     provider calls the onFail callback NarrationManager passed in, which
+ *     falls back to TTS for the same segment.
  *   - On end, the provider cleans up the audio element to prevent leaks.
  *   - Playback rate is applied via HTMLMediaElement.playbackRate.
  *   - Muting is via HTMLMediaElement.muted.
@@ -43,7 +44,7 @@
     return typeof Audio !== 'undefined' || typeof HTMLAudioElement !== 'undefined';
   }
 
-  function speak(text, audioUrl) {
+  function speak(text, audioUrl, onFail) {
     if (!audioUrl) return false;
     // Cancel any in-flight audio first
     cancel();
@@ -62,22 +63,18 @@
         cleanup();
         notifyStateChange();
       };
-      audio.onerror = () => {
-        console.warn('[AudioProvider] audio error:', audioUrl);
+      const fail = (why) => {
+        if (AudioProvider.currentAudio !== audio) return; // already cancelled
+        console.warn('[AudioProvider] ' + why + ':', audioUrl);
         cleanup();
-        // Return false so NarrationManager falls back — but we're in an
-        // async callback, so we trigger fallback via state change.
-        // NarrationManager's next speak() will try the next provider.
-        notifyStateChange();
+        if (typeof onFail === 'function') onFail();
       };
+      audio.onerror = () => fail('audio error');
 
-      // Play returns a promise; if it rejects (autoplay policy), clean up
+      // Play returns a promise; if it rejects (autoplay policy), fall back
       const playPromise = audio.play();
       if (playPromise && typeof playPromise.catch === 'function') {
-        playPromise.catch(e => {
-          console.warn('[AudioProvider] play() rejected:', e);
-          cleanup();
-        });
+        playPromise.catch(() => fail('play() rejected'));
       }
 
       return true;

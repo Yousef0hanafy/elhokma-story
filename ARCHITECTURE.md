@@ -32,7 +32,7 @@ For "what does each file do", see the README architecture tree. For "how to depl
 | `app.js` | Scene dispatch, state, UI wiring | Scene renderers are registered in `SCENE_RENDERERS` map, not if/else |
 | `narrator.js` | Timed subtitles + typewriter + pause/resume | Subtitles ALWAYS render; audio is optional |
 | `animator.js` | setTimeout-based timeline orchestration | All timeouts tracked in `timeouts[]` for clean cancellation |
-| `modal-manager.js` | Modal lifecycle (focus trap, aria-hidden) | Only modifies elements that don't already have `aria-hidden` |
+| `modal-manager.js` | Modal lifecycle (focus trap, `inert` background) | Only modifies elements that aren't already `inert` |
 
 ### Narration (provider abstraction)
 
@@ -114,25 +114,24 @@ if (!isSceneCompleted(idx)) {
 
 **Invariant**: Never call `resetCurrentSceneState()` unconditionally. Always guard with `isSceneCompleted()`.
 
-### `ModalManager.open()` — aria-hidden preservation
+### `ModalManager.open()` — inert background
 
-```js
-if (el.getAttribute('aria-hidden') === 'true') return; // already hidden — leave it alone
-```
+**Why**: `aria-hidden` on a container that still holds focusable buttons hides them from screen readers while keyboard users can still reach them. `inert` removes the background from both the accessibility tree and the tab order.
 
-**Why**: The loader, letterbox bars, and topbar start with `aria-hidden="true"` in the HTML. If we blindly `setAttribute('aria-hidden', 'true')` on all body children and then `removeAttribute` on close, we'd corrupt their original state.
+**Invariant**: Only make elements `inert` that aren't already inert (drawers and overlays start inert in the HTML). Track modified elements via `data-modal-hidden="1"` and only restore those.
 
-**Invariant**: Only set `aria-hidden` on elements that don't already have it. Track modified elements via `data-modal-hidden="1"` and only restore those.
+### Navigation, timers and completion
 
-### Narrator pause — timeout re-scheduling math
+- Every scene change goes through `goToScene(idx, opts)`, which enforces gating and review mode. Keyboard shortcuts, the drawer and the hub all use it.
+- Scene timers use `later()` (`Animator.delay`); `renderScene()` calls `Animator.clear()`, so callbacks from a scene the learner left never fire.
+- `finishCourse()` stamps the completion record, sets `passed`/`failed`, and sets `cmi.core.exit` to `''`. `showCompletionScreen()` only reads that record.
+- While the course is unfinished, `cmi.core.exit` is `suspend` so the LMS keeps `suspend_data` for resume.
 
-```js
-const elapsed = (Narrator.pauseTimestamp - Narrator.startTimestamp) / 1000;
-```
+### Narrator — one pending step, speech-aware
 
-**Why**: `setTimeout` doesn't expose remaining delay. On pause, we calculate elapsed time from `startTimestamp`, then re-schedule each pending segment with `seg.time - elapsed`. On resume, we adjust `startTimestamp` so the next pause calculation is correct.
+The narrator keeps a single pending step (`{fn, due}`) instead of one `setTimeout` per segment. After showing a segment it waits at least the gap to the next segment's `time`, and also until `NarrationManager.isSpeaking()` is false (capped at 15s), so subtitles never run ahead of the voice.
 
-**Invariant**: `startTimestamp` must be adjusted on resume (`Date.now() - (pauseTimestamp - startTimestamp)`). If you forget this, a second pause will calculate elapsed time incorrectly and segments will fire at the wrong times.
+**Invariant**: pause cancels the pending step; resume replays the current segment (speech can't be resumed mid-sentence reliably). `stop()` is silent; `skip()` fires `onComplete`.
 
 ### SCORM `finish()` — idempotency
 
@@ -251,17 +250,14 @@ These modules were chosen because:
 3. They're the modules most likely to be modified when business rules change
 
 **What is NOT unit-tested (and why)**:
-- `narrator.js`, `modal-manager.js`, `animator.js` — DOM-coupled, better tested via the smoke test
-- Scene renderers in `app.js` — integration-level, verified by the Playwright smoke test in CI
-- `tts.js`, `audio-provider.js` — depend on browser APIs (Web Speech, HTMLAudio) that can't be meaningfully mocked
+- `narrator.js`, `modal-manager.js`, `animator.js`, the scene renderers in `app.js`, and narration — covered end to end by `tests/e2e/course.e2e.js` (Playwright, strict mock SCORM LMS, fake Web Speech voice)
 
 **CI pipeline** (`.github/workflows/ci.yml`):
-1. JS syntax check (all files)
-2. Unit tests (`./scripts/test.sh`)
-3. JSON + HTML validation
-4. Forbidden pattern check (no eval, no inline handlers)
-5. File reference check (all `<script src>` files exist)
-6. Playwright smoke test (load, navigate, modal focus, aria-hidden, SCORM, modules)
+1. ESLint, html-validate, file-list consistency (`npm run lint`)
+2. Unit tests (`npm run test:unit`)
+3. Inline-handler check
+4. End-to-end tests (`npm run test:e2e`): full run to 100, gating, resume, review mode, scoring policy, narration timing, fonts, SW
+5. Build the SCORM ZIP and upload it as a CI artifact
 
 ---
 
@@ -284,12 +280,11 @@ These modules were chosen because:
 **Routine (every content update)**:
 - Bump `CONTENT.course.version` in `content.js`
 - Update `CHANGELOG.md`
-- Run `./scripts/test.sh && ./scripts/build-scorm.sh`
+- Run `npm test && npm run build:scorm`
 - Test the ZIP in at least one LMS before distribution
 
 **Annual (or when browsers change)**:
 - Test in current Chrome, Firefox, Safari, Edge
-- Verify Google Fonts CDN is still accessible (or self-host fonts)
 - Check if Web Speech API Arabic voice availability has improved
 - Review `sw.js` cache version — bump `CACHE_VERSION` if the SW needs to be invalidated
 
@@ -297,8 +292,7 @@ These modules were chosen because:
 - `scoring.js` — run `node tests/scoring.test.js` before and after
 - `version.js` — run `node tests/version.test.js` before and after
 - `scorm-api.js` — run `node tests/scorm-api.test.js` before and after
-- `narrator.js` — manually test pause/resume/skip/replay in a browser
-- `modal-manager.js` — manually verify focus trap + aria-hidden preservation
+- `narrator.js`, `modal-manager.js`, `app.js` — run `npm run test:e2e`
 
 ---
 
@@ -309,7 +303,7 @@ These modules were chosen because:
 | Blank stage after scene transition | Renderer threw an error | Check console; ErrorBoundary should show recovery UI. Look for `TypeError` in the renderer. |
 | Score not updating in LMS | `commit()` is debounced (600ms) | Call `commitNow()` for immediate flush, or wait 1 second |
 | Learner progress lost on iOS | `pagehide` called `finish()` on bfcache | Verify `event.persisted` check is present in `handleUnload` |
-| Modal focus escapes | `aria-hidden` corruption | Check ModalManager only sets aria-hidden on elements without it |
+| Modal focus escapes | Background not `inert` | Check ModalManager makes body children inert and restores only those it changed |
 | Audio doesn't play | Autoplay policy or missing manifest | Verify user clicked "activate" button; check `CONTENT.audio.narration` has the scene+segment |
 | Arabic TTS silent | No Arabic voice installed | Expected on most desktops; subtitles are the fallback. Install an Arabic voice in OS settings. |
-| SCORM import fails | Missing file in manifest | Run `./scripts/build-scorm.sh` and verify all 20 JS files are in the ZIP |
+| SCORM import fails | Missing file in manifest | Run `npm run check:files`, then `./scripts/build-scorm.sh` |

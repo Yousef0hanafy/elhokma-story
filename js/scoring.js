@@ -14,16 +14,24 @@
  * future engineer changes the formula in exactly one place.
  *
  * API:
- *   Scoring.recordScene(idx, correct)           // 1 or 0 for scenes 1-6
- *   Scoring.recordDilemma(idx, correctPhases, totalPhases)  // scene 7
+ *   Scoring.init(sceneScoresRef, scoredSceneCount, policy)
+ *   Scoring.recordScene(idx, correct)           // 1 or 0 for an MCQ scene
+ *   Scoring.recordDilemma(idx, correctPhases, totalPhases)  // partial credit
+ *   Scoring.isRecorded(idx)                     // has this scene been scored?
  *   Scoring.reset()                              // clear all (restart)
  *   Scoring.compute()                           // → 0..100
  *   Scoring.commit()                            // write to LMS + persist
  *
  * Policy:
- *   - Each of the N scenes contributes equally: weight = 100 / N.
- *   - Scenes 1-6: correct → full weight, wrong → 0.
- *   - Scene 7 (dilemma): partial credit = (correctPhases / totalPhases) × weight.
+ *   - Only scenes that carry an assessment count. The opening scene has no
+ *     question, so a 7-scene course with 6 assessed scenes weighs each
+ *     assessed scene 100 / 6. (Dividing by all 7 scenes capped the best
+ *     possible score at 86.)
+ *   - MCQ scenes: correct → full weight, wrong → 0.
+ *   - Dilemma: partial credit = (correctPhases / totalPhases) × weight.
+ *   - 'first_attempt' (default): the first recorded result for a scene is
+ *     final; retries never change it. 'best_attempt': a better result
+ *     replaces a worse one.
  *   - Total is clamped to [0, 100].
  */
 (function (global) {
@@ -35,28 +43,36 @@
   // We store a reference to the app's state object so scores persist via
   // the existing suspend_data mechanism — no separate storage layer.
   let _sceneScores = null;
-  let _totalScenes = 7; // default; overwritten on init
+  let _scoredScenes = 1;
+  let _policy = 'first_attempt';
 
-  function init(sceneScoresRef, totalScenes) {
+  function init(sceneScoresRef, scoredSceneCount, policy) {
     _sceneScores = sceneScoresRef || {};
-    _totalScenes = totalScenes || 7;
+    _scoredScenes = scoredSceneCount > 0 ? scoredSceneCount : 1;
+    _policy = policy === 'best_attempt' ? 'best_attempt' : 'first_attempt';
+  }
+
+  function isRecorded(idx) {
+    return !!_sceneScores && typeof _sceneScores[idx] === 'number';
+  }
+
+  function store(idx, value) {
+    if (!_sceneScores) _sceneScores = {};
+    if (isRecorded(idx)) {
+      if (_policy === 'first_attempt') return;
+      if (value <= _sceneScores[idx]) return;
+    }
+    _sceneScores[idx] = value;
   }
 
   function recordScene(idx, correct) {
-    if (!_sceneScores) _sceneScores = {};
-    _sceneScores[idx] = correct ? 1 : 0;
+    store(idx, correct ? 1 : 0);
   }
 
   // Dilemma gets partial credit: if the learner got 3/4 phases right,
-  // they earn (3/4) × weight for that scene. We store the fraction as
-  // a decimal so compute() can distinguish "0 = wrong" from "0 = no attempt".
+  // they earn (3/4) × weight for that scene, stored as a 0.0–1.0 fraction.
   function recordDilemma(idx, correctPhases, totalPhases) {
-    if (!_sceneScores) _sceneScores = {};
-    if (totalPhases <= 0) { _sceneScores[idx] = 0; return; }
-    const fraction = correctPhases / totalPhases;
-    // Store as decimal (0.0–1.0). compute() multiplies by weight.
-    // A perfect run stores 1.0 (same as a correct MCQ scene).
-    _sceneScores[idx] = fraction;
+    store(idx, totalPhases > 0 ? Math.max(0, Math.min(1, correctPhases / totalPhases)) : 0);
   }
 
   function reset() {
@@ -67,7 +83,7 @@
   }
 
   function weightPerScene() {
-    return _totalScenes > 0 ? 100 / _totalScenes : 0;
+    return 100 / _scoredScenes;
   }
 
   function compute() {
@@ -76,7 +92,6 @@
     let total = 0;
     for (const v of Object.values(_sceneScores)) {
       if (typeof v !== 'number') continue;
-      // v is 1 (full credit), 0 (no credit), or a fraction (dilemma partial).
       total += v * weight;
     }
     return Math.min(100, Math.max(0, Math.round(total)));
@@ -97,6 +112,7 @@
   Scoring.init = init;
   Scoring.recordScene = recordScene;
   Scoring.recordDilemma = recordDilemma;
+  Scoring.isRecorded = isRecorded;
   Scoring.reset = reset;
   Scoring.compute = compute;
   Scoring.commit = commit;

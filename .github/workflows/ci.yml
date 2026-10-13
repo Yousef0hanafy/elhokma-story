@@ -2,94 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main, production-upgrade]
+    branches: [main]
   pull_request:
     branches: [main]
 
 jobs:
-  # Static checks: JS syntax, JSON validity, HTML structure.
-  # No build step needed — this is a no-framework vanilla JS project.
+  # Static checks + unit tests. No browser needed.
   lint:
-    name: Lint & Validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Check JS syntax (all .js files)
-        run: |
-          set -e
-          for f in js/*.js sw.js; do
-            if [ -f "$f" ]; then
-              node --check "$f" && echo "✓ $f"
-            fi
-          done
-
-      - name: Run unit tests
-        run: ./scripts/test.sh
-
-      - name: Validate JSON (manifest)
-        run: |
-          python3 -c "import json; json.load(open('manifest.webmanifest')); print('✓ manifest.webmanifest')"
-
-      - name: Validate HTML structure
-        run: |
-          python3 -c "
-          import html.parser, sys
-          class P(html.parser.HTMLParser):
-              def __init__(self):
-                  super().__init__()
-                  self.errors = []
-              def error(self, msg):
-                  self.errors.append(msg)
-          with open('index.html', encoding='utf-8') as f:
-              p = P()
-              p.feed(f.read())
-          if p.errors:
-              print('HTML errors:', p.errors)
-              sys.exit(1)
-          print('✓ index.html parses')
-          "
-
-      - name: Check for forbidden patterns
-        run: |
-          set -e
-          # No eval, no Function constructor, no document.write
-          if grep -rE '(eval\s*\(|new\s+Function\s*\(|document\.write\s*\()' js/ --include='*.js'; then
-            echo "❌ Found forbidden pattern (eval/Function/document.write)"
-            exit 1
-          fi
-          # No inline event handlers in HTML (except the font onload pattern)
-          if grep -E 'on(click|load|error)="' index.html | grep -v 'onload="this.onload=null;this.rel' ; then
-            echo "❌ Found inline event handler in HTML"
-            exit 1
-          fi
-          echo "✓ No forbidden patterns"
-
-      - name: Check all referenced files exist
-        run: |
-          set -e
-          python3 -c "
-          import re, os, sys
-          with open('index.html', encoding='utf-8') as f:
-              html = f.read()
-          refs = re.findall(r'(?:src|href)=\"([^\"]+)\"', html)
-          # Skip external URLs, data URIs, and fragment-only links (#...)
-          local = [r for r in refs if not r.startswith(('http', '//', 'data:', 'mailto:', '#'))]
-          missing = [r for r in local if not os.path.exists(r)]
-          if missing:
-              print('❌ Missing referenced files:', missing)
-              sys.exit(1)
-          print(f'✓ All {len(local)} local references exist')
-          "
-
-  # Smoke test: serve the site and verify it loads without JS errors.
-  smoke:
-    name: Smoke Test
+    name: Lint & Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,165 +23,61 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
+      - name: Lint JavaScript
+        run: npm run lint:js
+
+      - name: Validate HTML
+        run: npm run lint:html
+
+      - name: Check packaging consistency
+        run: npm run check:files
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Forbid inline event handlers in HTML
+        run: |
+          if grep -nE '\son[a-z]+="' index.html; then
+            echo "Inline event handlers violate the CSP (script-src 'self')."
+            exit 1
+          fi
+
+  # Runs the real course in Chromium against a strict mock LMS.
+  e2e:
+    name: End-to-End (mock LMS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Serve & smoke test
-        run: |
-          python3 -m http.server 8765 &
-          SERVER_PID=$!
-          sleep 2
+      - name: End-to-end tests
+        run: npm run test:e2e
 
-          node -e "
-          const { chromium } = require('playwright');
-          (async () => {
-            const browser = await chromium.launch();
-            const page = await browser.newPage();
-            const errors = [];
-            page.on('pageerror', e => errors.push('PageError: ' + e.message));
-            page.on('console', msg => {
-              if (msg.type() === 'error') errors.push('ConsoleError: ' + msg.text());
-            });
-            // Capture CSP violations
-            page.on('requestfailed', req => {
-              const url = req.url();
-              if (url.includes('fonts.g')) return; // fonts may fail in CI
-              errors.push('RequestFailed: ' + url + ' ' + req.failure()?.errorText);
-            });
-            await page.goto('http://localhost:8765/', { waitUntil: 'networkidle' });
-            await page.waitForTimeout(3000);
+  # Builds the SCORM ZIP and keeps it as a downloadable artifact.
+  package:
+    name: SCORM Package
+    runs-on: ubuntu-latest
+    needs: [lint, e2e]
+    steps:
+      - uses: actions/checkout@v4
 
-            // 1. Verify the app initialized
-            const title = await page.title();
-            if (!title.includes('رحلة الحوكمة')) {
-              errors.push('Title mismatch: ' + title);
-            }
+      - name: Build SCORM package
+        run: ./scripts/build-scorm.sh
 
-            // 2. Verify stage has content
-            const stageContent = await page.evaluate(() => document.getElementById('stage').innerHTML.length);
-            if (stageContent < 100) {
-              errors.push('Stage appears empty (length=' + stageContent + ')');
-            }
-
-            // 3. Verify no error boundary UI
-            const hasError = await page.evaluate(() => document.querySelector('[role=alert]') !== null);
-            if (hasError) {
-              errors.push('Error boundary UI is visible');
-            }
-
-            // 4. Verify skip link exists and is focusable
-            const skipLink = await page.evaluate(() => {
-              const sl = document.querySelector('.skip-link');
-              return sl ? { exists: true, tag: sl.tagName } : { exists: false };
-            });
-            if (!skipLink.exists) {
-              errors.push('Skip link not found');
-            }
-
-            // 5. Verify CSP meta tag is present
-            const cspPresent = await page.evaluate(() => 
-              document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]') !== null
-            );
-            if (!cspPresent) {
-              errors.push('CSP meta tag not found');
-            }
-
-            // 6. Verify SCORM initialized in standalone mode
-            const scormOk = await page.evaluate(() => 
-              window.ScormApi && window.ScormApi.isStandalone()
-            );
-            if (!scormOk) {
-              errors.push('SCORM standalone mode not detected');
-            }
-
-            // 7. Verify all core modules loaded
-            const modulesOk = await page.evaluate(() => ({
-              errorBoundary: !!window.ErrorBoundary,
-              tts: !!window.TTS,
-              narrator: !!window.Narrator,
-              animator: !!window.Animator,
-              modalManager: !!window.ModalManager,
-              scormApi: !!window.ScormApi,
-            }));
-            for (const [mod, ok] of Object.entries(modulesOk)) {
-              if (!ok) errors.push('Module not loaded: ' + mod);
-            }
-
-            // 8. Navigate: dismiss TTS overlay → wait for narration → skip → click CTA → verify scene 2
-            await page.evaluate(() => {
-              const click = (el) => el && el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-              click(document.getElementById('tts-skip-btn'));
-            });
-            await page.waitForTimeout(500);
-            // Wait until the skip button is enabled (narration has started) —
-            // the opening scene delays narration start to 4.5s after render.
-            await page.waitForFunction(() => {
-              const btn = document.getElementById('skip-btn');
-              return btn && !btn.disabled;
-            }, { timeout: 10000 });
-            await page.evaluate(() => {
-              document.getElementById('skip-btn')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            });
-            await page.waitForTimeout(800);
-            await page.evaluate(() => {
-              document.getElementById('cta-btn')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            });
-            await page.waitForTimeout(2500);
-
-            const scene2Heading = await page.evaluate(() => 
-              document.querySelector('#stage h2')?.textContent
-            );
-            if (!scene2Heading || scene2Heading.indexOf('غرفة القرار') === -1) {
-              errors.push('Scene 2 did not render. Heading: ' + scene2Heading);
-            }
-
-            // 9. Test modal: wait for scene 2 narration → skip → open seat → verify focus in modal
-            await page.waitForFunction(() => {
-              const btn = document.getElementById('skip-btn');
-              return btn && !btn.disabled;
-            }, { timeout: 10000 });
-            await page.evaluate(() => {
-              document.getElementById('skip-btn')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            });
-            await page.waitForTimeout(2500);
-            await page.evaluate(() => {
-              document.getElementById('seat-1')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            });
-            await page.waitForTimeout(800);
-
-            const modalFocus = await page.evaluate(() => {
-              const modal = document.querySelector('.seat-modal');
-              if (!modal) return { modalOpen: false };
-              return {
-                modalOpen: true,
-                focusInModal: modal.contains(document.activeElement),
-                activeClass: document.activeElement?.className,
-              };
-            });
-            if (!modalFocus.modalOpen) {
-              errors.push('Seat modal did not open');
-            } else if (!modalFocus.focusInModal) {
-              errors.push('Focus not in modal after open. Active: ' + modalFocus.activeClass);
-            }
-
-            // 10. Verify aria-hidden preserved on loader after modal open
-            const ariaOk = await page.evaluate(() => {
-              const loader = document.getElementById('loader');
-              return loader?.getAttribute('aria-hidden') === 'true';
-            });
-            if (!ariaOk) {
-              errors.push('Loader aria-hidden corrupted by modal');
-            }
-
-            await browser.close();
-
-            if (errors.length) {
-              console.error('❌ Smoke test failed:');
-              errors.forEach(e => console.error('  - ' + e));
-              process.exit(1);
-            }
-            console.log('✓ Smoke test passed — app loads, navigates, modal traps focus, aria-hidden preserved');
-          })();
-          "
-
-          kill $SERVER_PID 2>/dev/null || true
+      - name: Upload SCORM package
+        uses: actions/upload-artifact@v4
+        with:
+          name: elhokma-governance-scorm
+          path: dist/elhokma-governance-scorm.zip
+          if-no-files-found: error

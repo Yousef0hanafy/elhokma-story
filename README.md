@@ -96,9 +96,10 @@ elhokma-story/
 │   ├── animator.js         ← منسّق الحركة
 │   ├── modal-manager.js    ← إدارة النوافذ المنبثقة (focus trap + a11y)
 │   └── app.js              ← التطبيق الرئيسي + ٧ دوال عرض
-├── tests/                  ← اختبارات وحدة (Scoring, Version, SCORM API)
+├── fonts/                  ← خطوط مستضافة ذاتيًا (Tajawal, Cairo, Amiri — OFL)
+├── tests/                  ← اختبارات وحدة + e2e على LMS وهمي (tests/e2e)
 ├── .github/workflows/
-│   └── ci.yml              ← فحوصات CI (unit tests + syntax + smoke test)
+│   └── ci.yml              ← CI: lint + unit + e2e + بناء حزمة SCORM
 ├── preview/                ← لقطات شاشة مرجعية
 ├── LICENSE                 ← رخصة MIT
 ├── CONTRIBUTING.md         ← إرشادات المساهمة
@@ -107,13 +108,21 @@ elhokma-story/
 └── README.md
 ```
 
+### الأوامر
+
+```bash
+npm ci
+npm test                 # كل الفحوصات: lint + unit + e2e
+npm run build:scorm      # يبني dist/elhokma-governance-scorm.zip
+```
+
 ### التقنيات
 - **Vanilla JS** (بلا أطر عمل) — متوافق مع بيئات SCORM المقيدة
 - **SVG inline** — الراوية، طاولة المجلس، خريطة النجوم
 - **Web Speech API** — السرد الصوتي العربي
 - **CSS Custom Properties** — لوحة ألوان موحّدة
-- **Google Fonts** — Tajawal + Cairo + Amiri (تحميل غير حاجب)
-- **Service Worker** — دعم العمل دون اتصال (app shell caching)
+- **خطوط مستضافة ذاتيًا** — Tajawal + Cairo + Amiri (woff2، بدون طلبات خارجية)
+- **Service Worker** — للعمل دون اتصال في النسخة المستقلة فقط (لا يُسجَّل داخل الـ LMS)
 - **PWA Manifest** — قابل للتثبيت كتطبيق مستقل
 
 ### الجاهزية للإنتاج
@@ -122,7 +131,7 @@ elhokma-story/
 - ✅ **إمكانية الوصول:** skip link، focus trap في النوافذ، ARIA management
 - ✅ **SCORM:** debounced commits، mobile unload handling، try/catch على كل استدعاءات LMS
 - ✅ **SEO:** meta tags كاملة، Open Graph، canonical URL
-- ✅ **الأداء:** تحميل خطوط غير حاجب، service worker caching
+- ✅ **الأداء:** خطوط محلية، service worker في النسخة المستقلة
 - ✅ **CI:** فحوصات تلقائية لكل pull request
 
 ---

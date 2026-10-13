@@ -11,8 +11,14 @@
  * 3. Many systems (especially Linux/headless) have NO Arabic voices. We
  *    detect this and gracefully fall back to subtitle-only mode with a
  *    clear UI indicator.
- * 4. If Arabic voices aren't available, we try ANY voice that can handle
- *    Arabic text (some multilingual voices exist).
+ * 4. Without an Arabic voice we report `available: false`; the app then
+ *    runs subtitle-only and says so, rather than reading Arabic text with
+ *    an English voice.
+ * 5. Chrome silently stops any single utterance after ~15 seconds. Long
+ *    text is split at sentence boundaries into short utterances that the
+ *    browser queues back to back.
+ * 6. Mute and speed are owned (and persisted) by NarrationManager, which
+ *    pushes them here; this module stores no settings of its own.
  *
  * API:
  *   TTS.init()                  // call once on app boot
@@ -45,26 +51,8 @@
     voiceCheckTimer: null,
   };
 
-  // ---------- Persistence ----------
-  const LS_KEY = 'tts_settings_v1';
-  function loadSettings() {
-    try {
-      const s = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-      TTS.muted = s.muted !== undefined ? !!s.muted : false;
-      TTS.rate = s.rate || 1.0;
-      // Don't persist activated across sessions — user must re-activate
-      // (browser autoplay policies reset per session)
-    } catch (e) {}
-  }
-  function saveSettings() {
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ muted: TTS.muted, rate: TTS.rate }));
-    } catch (e) {}
-  }
-
   // ---------- Init ----------
   function init() {
-    loadSettings();
     if (!('speechSynthesis' in global) || !global.speechSynthesis) {
       console.info('[TTS] Web Speech API not available — subtitle-only mode.');
       TTS.available = false;
@@ -147,6 +135,21 @@
   }
 
   // ---------- Speak ----------
+  // Split at sentence punctuation (Arabic and Latin) into chunks short
+  // enough to stay under Chrome's ~15s utterance cut-off.
+  const MAX_CHUNK = 160;
+  function splitText(text) {
+    const sentences = String(text).match(/[^.!?؟؛،\n]+[.!?؟؛،\n]*/g) || [String(text)];
+    const chunks = [];
+    let cur = '';
+    sentences.forEach(sentence => {
+      if ((cur + sentence).length > MAX_CHUNK && cur) { chunks.push(cur.trim()); cur = ''; }
+      cur += sentence;
+    });
+    if (cur.trim()) chunks.push(cur.trim());
+    return chunks.length ? chunks : [String(text)];
+  }
+
   function speak(text) {
     if (!TTS.available || TTS.muted || !TTS.voice || !text) {
       return false;
@@ -160,36 +163,49 @@
     // Cancel any in-flight speech
     cancel();
 
-    const u = new SpeechSynthesisUtterance(text);
-    u.voice = TTS.voice;
-    u.lang = TTS.voice.lang;
-    u.rate = TTS.rate;
-    u.pitch = TTS.pitch;
-    u.volume = TTS.volume;
+    const chunks = splitText(text);
+    const token = {};
+    TTS.currentUtterance = token;
+    // Mark as speaking right away (the browser starts asynchronously) so
+    // the Narrator never mistakes "about to speak" for "finished".
+    TTS.speaking = true;
+    notifyStateChange();
 
-    u.onstart = () => {
-      TTS.speaking = true;
-      notifyStateChange();
-    };
-    u.onend = () => {
-      TTS.speaking = false;
-      TTS.currentUtterance = null;
-      notifyStateChange();
-    };
-    u.onerror = (e) => {
-      if (e.error && !['interrupted', 'canceled'].includes(e.error)) {
-        console.warn('[TTS] Speech error:', e.error);
-      }
-      TTS.speaking = false;
-      TTS.currentUtterance = null;
-      notifyStateChange();
-    };
+    const utterances = chunks.map((chunk, i) => {
+      const u = new SpeechSynthesisUtterance(chunk);
+      u.voice = TTS.voice;
+      u.lang = TTS.voice.lang;
+      u.rate = TTS.rate;
+      u.pitch = TTS.pitch;
+      u.volume = TTS.volume;
+      const isLast = i === chunks.length - 1;
+      u.onend = () => {
+        if (!isLast || TTS.currentUtterance !== token) return;
+        TTS.speaking = false;
+        TTS.currentUtterance = null;
+        notifyStateChange();
+      };
+      u.onerror = (e) => {
+        if (e.error && !['interrupted', 'canceled'].includes(e.error)) {
+          console.warn('[TTS] Speech error:', e.error);
+        }
+        if (TTS.currentUtterance !== token) return;
+        TTS.speaking = false;
+        TTS.currentUtterance = null;
+        notifyStateChange();
+      };
+      return u;
+    });
 
-    TTS.currentUtterance = u;
     // Small delay helps Chrome process cancel-before-speak reliably
     setTimeout(() => {
-      if (TTS.currentUtterance === u && TTS.synth) {
-        try { TTS.synth.speak(u); } catch (e) { console.warn('[TTS] speak() failed:', e); }
+      if (TTS.currentUtterance !== token || !TTS.synth) return;
+      try { utterances.forEach(u => TTS.synth.speak(u)); }
+      catch (e) {
+        console.warn('[TTS] speak() failed:', e);
+        TTS.speaking = false;
+        TTS.currentUtterance = null;
+        notifyStateChange();
       }
     }, 30);
     return true;
@@ -207,12 +223,10 @@
   function setMuted(m) {
     TTS.muted = !!m;
     if (TTS.muted) cancel();
-    saveSettings();
     notifyStateChange();
   }
   function setRate(r) {
     TTS.rate = Math.max(0.5, Math.min(2.0, r));
-    saveSettings();
   }
   function isEnabled() {
     return TTS.available && TTS.activated && !TTS.muted;

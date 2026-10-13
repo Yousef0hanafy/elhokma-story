@@ -15,14 +15,15 @@
  *    content version, the learner sees a "content updated" notice on the
  *    completion screen — their completion is still valid, but they may
  *    want to review the updated content.
- *  - The version is also written to cmi.core.lesson_location (SCORM 1.2
- *    allows free-form strings) as a secondary audit trail for LMSs that
- *    expose it in reports.
+ *  - The completion record is stamped exactly once per completion. Showing
+ *    the completion screen again (after review, or on relaunch) reads the
+ *    record; it never re-stamps it, so the audited date stays the real one.
  *
  * API:
  *   Version.current()              // → '1.0.0' (from CONTENT.course.version)
  *   Version.label()                // → 'إصدار ١.٠.٠' (human-readable)
- *   Version.stampCompletion()      // records {version, date, score} in state
+ *   Version.bind(state)            // the app's state object (owns .completion)
+ *   Version.stampCompletion(score) // records {version, date, score} in state
  *   Version.getCompletion()        // → {version, date, score} or null
  *   Version.isStale()              // did the learner complete an older version?
  *
@@ -35,6 +36,11 @@
   'use strict';
 
   const Version = {};
+  let _state = null;
+
+  function bind(state) {
+    _state = state || null;
+  }
 
   function getContent() {
     return (global.STORY_CONTENT && global.STORY_CONTENT.course) || {};
@@ -67,8 +73,8 @@
   // saveState() mechanism (the app owns the state object; we just write to
   // a well-known field on it).
   function stampCompletion(score) {
-    if (!global.__APP_STATE__) return;
-    global.__APP_STATE__.completion = {
+    if (!_state) return;
+    _state.completion = {
       version: current(),
       date: new Date().toISOString(),
       score: score,
@@ -76,7 +82,7 @@
   }
 
   function getCompletion() {
-    return (global.__APP_STATE__ && global.__APP_STATE__.completion) || null;
+    return (_state && _state.completion) || null;
   }
 
   // Did the learner complete an older version of the content?
@@ -86,6 +92,7 @@
     return compareVersions(c.version, current()) < 0;
   }
 
+  Version.bind = bind;
   Version.current = current;
   Version.label = label;
   Version.stampCompletion = stampCompletion;

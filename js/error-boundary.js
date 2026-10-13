@@ -35,8 +35,8 @@
 
     global.addEventListener('unhandledrejection', (e) => {
       const reason = e && e.reason;
-      const msg = reason && (reason.message || reason.toString()) || 'Unhandled promise rejection';
-      // Font load failures, TTS init issues — non-fatal. Just log.
+      // Font load failures, TTS init issues — non-fatal. Record and log.
+      record(reason, 'unhandledrejection');
       console.warn('[UnhandledRejection]', reason);
     });
   }
@@ -72,7 +72,7 @@
     if (!stage) return;
     // Cancel any in-flight narration / TTS so the user isn't read over.
     try { if (global.TTS) TTS.cancel(); } catch (e) {}
-    try { if (global.Narrator) { Narrator.skipRequested = true; Narrator.hideNarrator(); } } catch (e) {}
+    try { if (global.Narrator) { Narrator.stop(); Narrator.hideNarrator(); } } catch (e) {}
     try { if (global.Animator) Animator.clear(); } catch (e) {}
     // Close any open modal so it doesn't sit on top of the error UI.
     try { if (global.ModalManager && global.ModalManager.isOpen()) global.ModalManager.close(); } catch (e) {}
