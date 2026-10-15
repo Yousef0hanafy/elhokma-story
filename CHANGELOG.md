@@ -22,8 +22,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - No `cancel()` right before `speak()` unless something is playing (Android could drop the new sentence); a watchdog stops the narration from stalling when an engine never reports the end of a sentence.
 - When no Arabic voice exists, the card tells Android / iPhone users where to add one.
 
+### Added
+- Recorded Arabic narration (`audio/`, 57 MP3 files, ~1.3 MB) so the course speaks on every phone, including ones without an Arabic voice. The device voice is only a fallback for a missing file. The current voice is a free placeholder (CC BY-NC-SA, non-commercial); replace it before commercial use (see `audio/LICENSE.txt`).
+- `scripts/generate-narration.py` regenerates the MP3s and the file lists from `content.js`.
+
+### Fixed (round 2)
+- Audio playback on iPhone: one `<audio>` element is unlocked by the first tap and reused, so later segments are not blocked by autoplay rules.
+- The service worker no longer intercepts MP3 / range requests (Safari needs real range responses to play audio).
+- Grammar: «ويُبنى الثقة» → «وتُبنى الثقة».
+- Phones: seat and star labels were ~5px on screen; they are now readable. Toasts show as a slim banner under the topbar instead of covering seats and feedback. Header buttons are 40px on touch screens.
+- `npm run check:files` verifies every narration file exists and is packaged.
+
 ### Changed
-- Service worker cache bumped to `elhokma-v4` so installed copies pick up the new CSS.
+- Service worker cache bumped to `elhokma-v5` so installed copies pick up the new files.
 
 ## [1.1.0] — 2026-10-12
 

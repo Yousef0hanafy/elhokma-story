@@ -1049,12 +1049,24 @@ body.cinematic .letterbox { height: 56px; }
   .subtitle-bar { padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px)); }
   .subtitle-text { font-size: 13px; line-height: 1.6; }
   .boardroom-stage { max-width: 100%; }
-  .seat-icon { font-size: 16px; }
-  .seat-label { font-size: 9px; }
+  /* The board SVG shrinks to ~half size on phones, so its text needs
+     larger SVG units to stay readable (~9-10px on screen). */
+  .seat-icon { font-size: 26px; }
+  .seat-label { font-size: 18px; }
   .table-label { font-size: 11px; }
   .cta-zone { bottom: calc(var(--subtitle-h) + 16px); }
   .cta-primary { padding: 12px 24px; font-size: 14px; min-height: 46px; }
   .seat-modal-card { padding: 20px 16px 16px; }
+  /* On phones the content fills the screen, so a toast in the middle covers
+     seats, stars and feedback. Show it as a slim banner under the topbar. */
+  .toast {
+    top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px) + 8px);
+    bottom: auto;
+    transform: translateX(-50%) translateY(-20px);
+    font-size: 12px;
+    padding: 8px 14px;
+    width: max-content;
+  }
   .seat-modal-num { font-size: 44px; }
   .seat-modal-title { font-size: 22px; }
   .seat-modal-story { font-size: 14px; }
@@ -1187,6 +1199,11 @@ body.modal-open { overflow: hidden; }
   padding: 0;
 }
 .topbar-btn-icon:hover { background: rgba(212, 175, 55, 0.2); transform: scale(1.05); }
+/* Touch screens: 40px header buttons are easier to hit with a thumb. */
+@media (hover: none) {
+  .topbar-btn-icon { width: 40px; height: 40px; }
+  .topbar-btn { min-height: 40px; }
+}
 .topbar-btn-icon.muted { opacity: 0.4; }
 .topbar-btn-icon:disabled { opacity: 0.25; cursor: not-allowed; }
 #tts-rate-label { font-size: 12px; }

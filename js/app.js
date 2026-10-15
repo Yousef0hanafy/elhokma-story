@@ -559,7 +559,9 @@
   // started first.
   function unlockNarration() {
     if (Narrator.speakCurrent()) return;
-    if (window.TTS && TTS.unlock && NarrationManager.getState().available === 'tts') TTS.unlock();
+    const available = NarrationManager.getState().available;
+    if (available === 'audio' && window.AudioProvider) AudioProvider.unlock();
+    if (window.TTS && TTS.unlock && available === 'tts') TTS.unlock();
   }
 
   // ---------- TTS Activation Overlay ----------

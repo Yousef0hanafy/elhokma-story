@@ -18,106 +18,131 @@
  * and add an audio manifest to content.js (see CONTENT.audio.narration).
  * The provider handles the rest — no code changes needed.
  *
- * Memory: each speak() creates a new Audio element. On end/error, the
- * element is removed and dereferenced. cancel() stops and cleans up the
- * current element. No leaks across scene transitions.
+ * Phones: ONE <audio> element is reused for every segment. iOS only lets
+ * an element play from code after it has played once inside a tap, so
+ * unlock() (called from the "activate audio" tap) plays a short silent clip
+ * on it; every later segment then plays on the same, already-unlocked
+ * element. Android Chrome allows play() after any tap on the page.
  */
 (function (global) {
   'use strict';
 
+  const SILENCE_URL = 'audio/silence.mp3';
+
   const AudioProvider = {
-    currentAudio: null,
+    el: null,            // the single reusable <audio> element
+    currentAudio: null,  // === el while a segment is loaded, else null
+    token: null,         // identifies the segment in flight
     muted: false,
     rate: 1.0,
     stateListeners: [],
   };
 
+  function element() {
+    if (!AudioProvider.el) {
+      const a = new Audio();
+      a.preload = 'auto';
+      a.setAttribute('playsinline', '');
+      AudioProvider.el = a;
+    }
+    return AudioProvider.el;
+  }
+
   function init() {
-    // Clean up any audio on page unload
+    // Stop audio on page unload
     global.addEventListener('beforeunload', () => {
-      try { if (AudioProvider.currentAudio) { AudioProvider.currentAudio.pause(); AudioProvider.currentAudio = null; } } catch (e) {}
+      try { if (AudioProvider.el) AudioProvider.el.pause(); } catch (e) {}
     });
   }
 
   function isAvailable() {
-    // Available if the browser supports HTMLAudioElement (virtually all do)
     return typeof Audio !== 'undefined' || typeof HTMLAudioElement !== 'undefined';
+  }
+
+  // Must run inside the learner's tap (see header). Harmless elsewhere.
+  function unlock() {
+    if (AudioProvider.currentAudio) return; // already playing a segment in this tap
+    try {
+      const a = element();
+      a.src = SILENCE_URL;
+      a.muted = true;
+      const p = a.play();
+      const done = () => { if (!AudioProvider.currentAudio) { try { a.pause(); } catch (e) {} } a.muted = AudioProvider.muted; };
+      if (p && typeof p.then === 'function') p.then(done, done); else done();
+    } catch (e) { /* best-effort */ }
   }
 
   function speak(text, audioUrl, onFail) {
     if (!audioUrl) return false;
-    // Cancel any in-flight audio first
     cancel();
 
+    const a = element();
+    const token = {};
+    AudioProvider.token = token;
+    AudioProvider.currentAudio = a;
+
+    const finish = () => {
+      if (AudioProvider.token !== token) return;
+      AudioProvider.token = null;
+      AudioProvider.currentAudio = null;
+      notifyStateChange();
+    };
+    const fail = (why) => {
+      if (AudioProvider.token !== token) return; // cancelled or superseded
+      console.warn('[AudioProvider] ' + why + ':', audioUrl);
+      finish();
+      if (typeof onFail === 'function') onFail();
+    };
+
+    a.onplay = () => notifyStateChange();
+    a.onended = finish;
+    a.onerror = () => fail('audio error');
     try {
-      const audio = new Audio();
-      audio.src = audioUrl;
-      audio.playbackRate = AudioProvider.rate;
-      audio.muted = AudioProvider.muted;
-      audio.preload = 'auto';
-
-      AudioProvider.currentAudio = audio;
-
-      audio.onplay = () => notifyStateChange();
-      audio.onended = () => {
-        cleanup();
-        notifyStateChange();
-      };
-      const fail = (why) => {
-        if (AudioProvider.currentAudio !== audio) return; // already cancelled
-        console.warn('[AudioProvider] ' + why + ':', audioUrl);
-        cleanup();
-        if (typeof onFail === 'function') onFail();
-      };
-      audio.onerror = () => fail('audio error');
-
-      // Play returns a promise; if it rejects (autoplay policy), fall back
-      const playPromise = audio.play();
-      if (playPromise && typeof playPromise.catch === 'function') {
-        playPromise.catch(() => fail('play() rejected'));
+      a.muted = AudioProvider.muted;
+      a.src = audioUrl;
+      a.playbackRate = AudioProvider.rate;
+      // Keep the voice's pitch at other speeds (default in most browsers).
+      if ('preservesPitch' in a) a.preservesPitch = true;
+      const p = a.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(err => {
+          // A play() interrupted by our own cancel()/next segment is normal.
+          if (err && err.name === 'AbortError') return;
+          fail('play() rejected (' + (err && err.name) + ')');
+        });
       }
-
+      notifyStateChange();
       return true;
     } catch (e) {
       console.warn('[AudioProvider] speak failed:', e);
-      cleanup();
+      finish();
       return false;
     }
   }
 
   function cancel() {
-    if (AudioProvider.currentAudio) {
-      try {
-        AudioProvider.currentAudio.pause();
-        AudioProvider.currentAudio.currentTime = 0;
-      } catch (e) {}
-      cleanup();
+    const a = AudioProvider.el;
+    const wasActive = !!AudioProvider.currentAudio;
+    AudioProvider.token = null;
+    AudioProvider.currentAudio = null;
+    if (a && wasActive) {
+      try { a.pause(); } catch (e) {}
     }
-  }
-
-  function cleanup() {
-    if (AudioProvider.currentAudio) {
-      AudioProvider.currentAudio.onplay = null;
-      AudioProvider.currentAudio.onended = null;
-      AudioProvider.currentAudio.onerror = null;
-      AudioProvider.currentAudio.src = '';
-      AudioProvider.currentAudio = null;
-    }
-    notifyStateChange();
+    if (wasActive) notifyStateChange();
   }
 
   function setMuted(m) {
     AudioProvider.muted = !!m;
-    if (AudioProvider.currentAudio) AudioProvider.currentAudio.muted = AudioProvider.muted;
+    if (AudioProvider.el) AudioProvider.el.muted = AudioProvider.muted;
   }
 
   function setRate(r) {
     AudioProvider.rate = r;
-    if (AudioProvider.currentAudio) AudioProvider.currentAudio.playbackRate = r;
+    if (AudioProvider.el) AudioProvider.el.playbackRate = r;
   }
 
   function isSpeaking() {
-    return AudioProvider.currentAudio !== null && !AudioProvider.currentAudio.paused;
+    return AudioProvider.currentAudio !== null && !AudioProvider.currentAudio.ended;
   }
 
   function getName() { return 'audio'; }
@@ -133,6 +158,7 @@
   AudioProvider.init = init;
   AudioProvider.isAvailable = isAvailable;
   AudioProvider.speak = speak;
+  AudioProvider.unlock = unlock;
   AudioProvider.cancel = cancel;
   AudioProvider.setMuted = setMuted;
   AudioProvider.setRate = setRate;

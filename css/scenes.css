@@ -774,9 +774,11 @@
 
 @media (max-width: 640px) {
   .integrity-stage { max-width: 100%; }
-  .star-icon { font-size: 14px; }
-  .star-label { font-size: 9px; }
-  .star-center .star-icon { font-size: 18px; }
+  /* The SVG scales down on phones; larger SVG units keep labels legible. */
+  .star-icon { font-size: 20px; }
+  .star-label { font-size: 15px; }
+  .star-center .star-icon { font-size: 24px; }
+  .star-center .star-label { font-size: 16px; }
   .framework-cycle { gap: 4px; padding: 10px; }
   .cycle-step { min-width: 60px; }
   .cycle-step-num { width: 28px; height: 28px; font-size: 12px; }

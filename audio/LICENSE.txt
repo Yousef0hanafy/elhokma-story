@@ -1,0 +1,15 @@
+Narration audio in this folder
+==============================
+
+Generated with scripts/generate-narration.py from the narration text in
+js/content.js, using the Piper voice "ar_JO-SA_dii-high"
+(https://huggingface.co/OpenVoiceOS/phoonnx_ar-SA_dii_espeak, packaged by
+https://github.com/k2-fsa/sherpa-onnx).
+
+That voice is licensed under Creative Commons Attribution-NonCommercial-
+ShareAlike 4.0 International (CC BY-NC-SA 4.0):
+https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+Before any commercial use of this course, replace these files with studio
+recordings or audio from a commercially licensed voice. The course needs no
+code change for that: regenerate or drop in files with the same names.

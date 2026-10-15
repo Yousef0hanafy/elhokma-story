@@ -58,13 +58,26 @@ function installFakeSpeech(opts) {
   Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true });
 }
 
-async function newPage({ lms = true, reducedMotion = true, speechMs = 0, speech = null, device = null } = {}) {
+// Removes the recorded-narration manifest so a test exercises browser TTS.
+function disableRecordedNarration() {
+  let content;
+  Object.defineProperty(window, 'STORY_CONTENT', {
+    configurable: true,
+    get: () => content,
+    set: v => { if (v && v.audio) v.audio.narration = {}; content = v; },
+  });
+}
+
+async function newPage({ lms = true, reducedMotion = true, speechMs = 0, speech = null, device = null, recorded } = {}) {
+  // Tests that fake a TTS voice test TTS: no recorded audio unless asked.
+  if (recorded === undefined) recorded = !(speechMs || speech);
   const context = await browser.newContext({ ...(device || {}), reducedMotion: reducedMotion ? 'reduce' : 'no-preference' });
   // Block third-party requests: the course must work fully offline / inside
   // a locked-down hospital network.
   await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, route => route.abort());
   if (lms) await context.addInitScript(installMockLms);
   if (speechMs || speech) await context.addInitScript(installFakeSpeech, speech || speechMs);
+  if (!recorded) await context.addInitScript(disableRecordedNarration);
   const page = await context.newPage();
   page.errors = [];
   page.on('pageerror', e => page.errors.push('PageError: ' + e.message));
@@ -364,6 +377,36 @@ test('Fonts are self-hosted and load; no service worker inside an LMS', async ()
   await page.evaluate(() => document.fonts.ready);
   assert(await page.evaluate(() => document.fonts.check('700 16px Tajawal', 'رحلة')), 'Tajawal loaded');
   assertEqual(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), 0, 'no SW registered in LMS mode');
+  await page.context().close();
+});
+
+test('Recorded narration: one tap starts the sentence on screen, then each segment plays in turn', async () => {
+  const page = await newPage();
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
+  assert(!(await page.isHidden('#tts-activate-btn')), 'activate button offered at once (no voice to wait for)');
+  assert((await page.textContent('#tts-activation-status')).includes('مسجّل'), 'card says recorded narration');
+  await page.waitForFunction(() => window.Narrator && window.Narrator.isPlaying && document.getElementById('subtitle-text').textContent.length > 0);
+  const inTap = await page.evaluate(() => {
+    document.getElementById('tts-activate-btn').click();
+    const a = window.AudioProvider.el;
+    return { src: a && a.src, playing: a && !a.paused };
+  });
+  assert(/audio\/opening\/seg-\d+\.mp3$/.test(inTap.src), 'segment audio loaded in the tap: ' + inTap.src);
+  assert(inTap.playing, 'play() called inside the tap');
+  const first = inTap.src;
+  await page.waitForFunction(f => window.AudioProvider.el.src !== f && /seg-\d+\.mp3$/.test(window.AudioProvider.el.src), first, { timeout: 15000 });
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('A missing narration file falls back to the device voice for that sentence', async () => {
+  const page = await newPage({ speech: { ms: 300 }, recorded: true });
+  await page.context().route(/\.mp3$/, route => route.fulfill({ status: 404, body: '' }));
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
+  await page.click('#tts-activate-btn');
+  await page.waitForFunction(() => window.__speech.some(e => e.type === 'start'), null, { timeout: 10000 });
   await page.context().close();
 });
 

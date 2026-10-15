@@ -48,8 +48,22 @@ for (const f of new Set([...manifest, ...build])) {
   if (!fs.existsSync(path.join(root, f))) errors.push(`listed but missing on disk: ${f}`);
 }
 
+// Narration audio: every file the manifest in content.js points to must
+// exist and ship in the SCORM package (it is fetched on demand, so it is not
+// in the offline APP_SHELL).
+global.window = global;
+require(path.join(root, 'js/content.js'));
+const narration = (global.window.STORY_CONTENT.audio || {}).narration || {};
+const audioFiles = Object.values(narration).flatMap(scene => Object.values(scene));
+if (audioFiles.length) audioFiles.push('audio/silence.mp3');
+for (const f of audioFiles) {
+  if (!fs.existsSync(path.join(root, f))) errors.push(`narration file missing on disk: ${f}`);
+  if (!manifest.has(f)) errors.push(`narration file not in imsmanifest.xml: ${f}`);
+  if (!build.has(f)) errors.push(`narration file not in build-scorm.sh: ${f}`);
+}
+
 if (errors.length) {
   console.error('Packaging check failed:\n  ' + errors.join('\n  '));
   process.exit(1);
 }
-console.log(`✓ ${required.size} runtime files listed consistently in imsmanifest.xml, build-scorm.sh and sw.js`);
+console.log(`✓ ${required.size} runtime files listed consistently in imsmanifest.xml, build-scorm.sh and sw.js; ${audioFiles.length} narration audio files packaged`);
