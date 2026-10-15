@@ -95,15 +95,19 @@ body {
 .letterbox {
   position: fixed; left: 0; right: 0;
   height: 0; background: #000;
-  z-index: 100;
+  /* Below the topbar (50) and subtitle bar (52): the bars frame the scene,
+     they must never hide the controls or sit over drawers and dialogs. */
+  z-index: 48;
   transition: height 0.6s cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: none; /* letterbox is decorative — never intercept clicks */
 }
 .letterbox-top { top: 0; }
 .letterbox-bottom { bottom: 0; }
 body.cinematic .letterbox { height: 56px; }
-@media (max-width: 640px) {
-  body.cinematic .letterbox { height: 36px; }
+/* On phones every pixel of height counts and the topbar already sits at the
+   top edge, so the cinematic bars are dropped. */
+@media (max-width: 640px), (max-height: 500px) {
+  body.cinematic .letterbox { height: 0; }
 }
 
 /* ---------- Topbar ---------- */
@@ -112,7 +116,12 @@ body.cinematic .letterbox { height: 56px; }
   height: var(--topbar-h);
   z-index: 50;
   display: flex; align-items: center;
-  background: linear-gradient(180deg, rgba(11, 31, 51, 0.95) 0%, rgba(11, 31, 51, 0) 100%);
+  /* Solid enough that scrolled content never shows through the controls. */
+  background: linear-gradient(180deg, rgba(11, 31, 51, 0.97) 0%, rgba(11, 31, 51, 0.88) 100%);
+  border-bottom: 1px solid var(--rule);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  box-sizing: content-box;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.4s ease 0.8s;
@@ -164,7 +173,7 @@ body.cinematic .letterbox { height: 56px; }
   width: 100%;
   max-width: 1400px;
   margin: 0 auto;
-  padding: calc(var(--topbar-h) + 20px) 24px calc(var(--subtitle-h) + 120px);
+  padding: calc(var(--topbar-h) + env(safe-area-inset-top, 0px) + 20px) 24px calc(var(--subtitle-h) + 120px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -394,7 +403,7 @@ body.cinematic .letterbox { height: 56px; }
   position: fixed;
   bottom: 0; left: 0; right: 0;
   height: var(--subtitle-h);
-  z-index: 105; /* above letterbox (100) so subtitle controls stay clickable */
+  z-index: 52; /* above the letterbox (48); below drawers and dialogs (60+) */
   background: linear-gradient(180deg, transparent 0%, rgba(11, 31, 51, 0.85) 40%, rgba(11, 31, 51, 0.95) 100%);
   display: flex;
   flex-direction: column;
@@ -991,7 +1000,7 @@ body.cinematic .letterbox { height: 56px; }
   font-family: var(--font-display);
   font-size: 13px;
   font-weight: 600;
-  z-index: 80;
+  z-index: 95; /* above drawers and the audio card */
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   border: 1px solid var(--gold-dim);
   opacity: 0;
@@ -1008,6 +1017,7 @@ body.cinematic .letterbox { height: 56px; }
 }
 .toast.success { border-color: var(--green); color: var(--green); }
 .toast.error { border-color: var(--rose); color: var(--rose); }
+.toast.warning { border-color: var(--gold); color: var(--gold); }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
@@ -1030,18 +1040,13 @@ body.cinematic .letterbox { height: 56px; }
   .topbar-btn { padding: 6px 10px; }
   .topbar-title { font-size: 12px; }
   .topbar-scene { font-size: 11px; }
-  .stage { padding: calc(var(--topbar-h) + 16px) 16px calc(var(--subtitle-h) + 110px); }
+  .stage { padding: calc(var(--topbar-h) + env(safe-area-inset-top, 0px) + 16px) 16px calc(var(--subtitle-h) + 110px); }
   .scene-cover { gap: 16px; padding: 8px; }
   .scene-story { font-size: 14px; padding-right: 12px; }
-  .narrator-overlay {
-    top: 70px;
-    left: 12px;
-    --narrator-size: 72px;
-  }
   .narrator-avatar { border-width: 2px; }
   .narrator-name { display: none; }
   .narrator-wave { display: none; }
-  .subtitle-bar { padding: 12px 14px; }
+  .subtitle-bar { padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px)); }
   .subtitle-text { font-size: 13px; line-height: 1.6; }
   .boardroom-stage { max-width: 100%; }
   .seat-icon { font-size: 16px; }
@@ -1062,6 +1067,23 @@ body.cinematic .letterbox { height: 56px; }
 
 @media (max-width: 380px) {
   .scene-title { font-size: 28px; }
+}
+
+/* Phones (portrait and landscape): a floating portrait at the top covers
+   scene titles and content as the learner scrolls. Dock a small one beside
+   the subtitles instead, where the narrator is actually "speaking". */
+@media (max-width: 640px), (max-height: 500px) {
+  .narrator-overlay {
+    top: auto;
+    bottom: calc(var(--subtitle-h) - 62px + env(safe-area-inset-bottom, 0px));
+    left: 10px;
+    transform: none;
+    z-index: 53; /* just above the subtitle bar it sits on */
+    --narrator-size: 44px;
+  }
+  .narrator-avatar { border-width: 2px; }
+  .narrator-name, .narrator-wave { display: none; }
+  .subtitle-bar { padding-left: 64px; }
 }
 
 /* ---------- Touch optimization ---------- */
@@ -1823,18 +1845,23 @@ body:not(.dev-mode) .notes-backdrop {
    ===================================================================== */
 .review-banner {
   position: fixed;
-  top: var(--topbar-h);
+  top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px) + 1px);
   left: 0;
   right: 0;
   z-index: 45;
   background: linear-gradient(90deg, rgba(79, 195, 209, 0.15), rgba(79, 195, 209, 0.08));
   border-bottom: 1px solid var(--teal-dim);
   transform: translateY(-100%);
-  transition: transform 0.3s ease;
+  /* Hidden for real when off: the topbar is translucent, so a banner merely
+     slid under it would still show through. */
+  visibility: hidden;
+  transition: transform 0.3s ease, visibility 0s linear 0.3s;
   pointer-events: none;
 }
 body.review-mode .review-banner {
   transform: translateY(0);
+  visibility: visible;
+  transition: transform 0.3s ease, visibility 0s;
   pointer-events: auto;
 }
 .review-banner-inner {

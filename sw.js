@@ -22,7 +22,7 @@
  * APP_SHELL must list every runtime file; `npm run check:files` enforces it.
  * Bump CACHE_VERSION on every release.
  */
-const CACHE_VERSION = 'elhokma-v3';
+const CACHE_VERSION = 'elhokma-v4';
 const APP_SHELL = [
   './',
   './index.html',

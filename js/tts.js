@@ -19,6 +19,17 @@
  *    browser queues back to back.
  * 6. Mute and speed are owned (and persisted) by NarrationManager, which
  *    pushes them here; this module stores no settings of its own.
+ * 7. Phones:
+ *    - Some Android TTS engines (common on Xiaomi/Samsung) report NO voices
+ *      at all, yet speak Arabic fine when asked by language. With an empty
+ *      voice list we try "by language" (lang=ar-SA, no voice object) and
+ *      drop to subtitles if the engine then errors.
+ *    - iOS only lets speech start from inside a tap, so the first utterance
+ *      after activation is sent synchronously (no timer in between).
+ *    - Android Chrome can drop an utterance queued right after cancel(), and
+ *      some engines never fire `end`. We only cancel when something is
+ *      playing, leave a gap after a real cancel, and a watchdog clears the
+ *      "speaking" flag so the narration never stalls waiting for it.
  *
  * API:
  *   TTS.init()                  // call once on app boot
@@ -49,7 +60,12 @@
     speaking: false,
     pendingText: null,     // Text to speak once activated
     voiceCheckTimer: null,
+    byLanguage: false,     // no voice list: ask the engine for Arabic by lang
+    loading: false,        // still waiting for the voice list
+    watchdog: null,
   };
+
+  const FALLBACK_LANG = 'ar-SA';
 
   // ---------- Init ----------
   function init() {
@@ -60,6 +76,7 @@
       return;
     }
     TTS.synth = global.speechSynthesis;
+    TTS.loading = true;
 
     // Chrome loads voices asynchronously. Poll for up to 5 seconds.
     let attempts = 0;
@@ -74,8 +91,14 @@
       if (attempts < maxAttempts) {
         TTS.voiceCheckTimer = setTimeout(loadVoices, 250);
       } else {
-        console.info('[TTS] No voices found after 5s of polling. Subtitle-only mode.');
-        TTS.available = false;
+        // The engine exposes no voice list. Many Android engines still speak
+        // Arabic when asked by language, so offer audio and find out on the
+        // first utterance (an engine error turns it off again).
+        console.info('[TTS] No voice list after 5s; will request Arabic by language.');
+        TTS.voice = null;
+        TTS.byLanguage = true;
+        TTS.available = true;
+        TTS.loading = false;
         notifyStateChange();
       }
       return false;
@@ -97,6 +120,7 @@
   }
 
   function pickVoice(voices) {
+    TTS.loading = false;
     // Priority: ar-SA (Saudi) > ar-EG > any ar-* > multilingual voices
     const arVoices = voices.filter(v => /^ar(-|_)/i.test(v.lang) || /^ar$/i.test(v.lang));
     if (arVoices.length === 0) {
@@ -115,6 +139,7 @@
     const femaleAr = arVoices.find(v => femaleHints.some(h => (v.name || '').toLowerCase().includes(h)));
 
     TTS.voice = sa || femaleAr || eg || arVoices[0];
+    TTS.byLanguage = false;
     TTS.available = true;
     console.info(`[TTS] Arabic voice ready: ${TTS.voice.name} (${TTS.voice.lang})`);
     notifyStateChange();
@@ -151,7 +176,7 @@
   }
 
   function speak(text) {
-    if (!TTS.available || TTS.muted || !TTS.voice || !text) {
+    if (!TTS.available || TTS.muted || (!TTS.voice && !TTS.byLanguage) || !text) {
       return false;
     }
     // If not activated yet, queue the text for when user activates
@@ -160,7 +185,9 @@
       return false;
     }
 
-    // Cancel any in-flight speech
+    // Cancel in-flight speech only when there is some: on Android a
+    // cancel() right before speak() can swallow the new utterance.
+    const busy = engineBusy();
     cancel();
 
     const chunks = splitText(text);
@@ -173,50 +200,96 @@
 
     const utterances = chunks.map((chunk, i) => {
       const u = new SpeechSynthesisUtterance(chunk);
-      u.voice = TTS.voice;
-      u.lang = TTS.voice.lang;
+      if (TTS.voice) u.voice = TTS.voice;
+      u.lang = TTS.voice ? TTS.voice.lang : FALLBACK_LANG;
       u.rate = TTS.rate;
       u.pitch = TTS.pitch;
       u.volume = TTS.volume;
       const isLast = i === chunks.length - 1;
       u.onend = () => {
         if (!isLast || TTS.currentUtterance !== token) return;
-        TTS.speaking = false;
-        TTS.currentUtterance = null;
-        notifyStateChange();
+        finish();
       };
       u.onerror = (e) => {
-        if (e.error && !['interrupted', 'canceled'].includes(e.error)) {
-          console.warn('[TTS] Speech error:', e.error);
-        }
+        const real = e.error && !['interrupted', 'canceled'].includes(e.error);
+        if (real) console.warn('[TTS] Speech error:', e.error);
         if (TTS.currentUtterance !== token) return;
-        TTS.speaking = false;
-        TTS.currentUtterance = null;
-        notifyStateChange();
+        finish();
+        // Asked for Arabic by language and the engine cannot do it: stop
+        // offering audio rather than failing on every sentence.
+        if (real && TTS.byLanguage) {
+          console.info('[TTS] Engine cannot speak Arabic by language. Subtitle-only mode.');
+          TTS.available = false;
+          notifyStateChange();
+        }
       };
       return u;
     });
 
-    // Small delay helps Chrome process cancel-before-speak reliably
-    setTimeout(() => {
+    // Some Android engines never fire `end`. Clear "speaking" after a
+    // generous estimate so the Narrator is never stuck waiting on it.
+    const estimateMs = 2500 + String(text).length * 120 / (TTS.rate || 1);
+    TTS.watchdog = setTimeout(() => {
+      if (TTS.currentUtterance === token) finish();
+    }, estimateMs);
+
+    function finish() {
+      if (TTS.currentUtterance !== token) return;
+      clearTimeout(TTS.watchdog);
+      TTS.speaking = false;
+      TTS.currentUtterance = null;
+      notifyStateChange();
+    }
+
+    const send = () => {
       if (TTS.currentUtterance !== token || !TTS.synth) return;
-      try { utterances.forEach(u => TTS.synth.speak(u)); }
-      catch (e) {
+      try {
+        // Chrome on Android can be left "paused" after the tab was in the
+        // background; resume() is a no-op otherwise.
+        if (typeof TTS.synth.resume === 'function') TTS.synth.resume();
+        utterances.forEach(u => TTS.synth.speak(u));
+      } catch (e) {
         console.warn('[TTS] speak() failed:', e);
-        TTS.speaking = false;
-        TTS.currentUtterance = null;
-        notifyStateChange();
+        finish();
       }
-    }, 30);
+    };
+    // Speak right away when nothing was cancelled: this keeps the call inside
+    // the learner's tap, which iOS requires for the first utterance. After a
+    // real cancel, give the engine a moment to settle first.
+    if (busy) setTimeout(send, 150);
+    else send();
     return true;
+  }
+
+  function engineBusy() {
+    const synth = TTS.synth;
+    return !!(synth && (synth.speaking || synth.pending || TTS.speaking));
   }
 
   function cancel() {
     if (!TTS.synth) return;
-    try { TTS.synth.cancel(); } catch (e) {}
+    clearTimeout(TTS.watchdog);
+    // Only touch the engine when it has something to stop (see speak()).
+    if (engineBusy()) {
+      try { TTS.synth.cancel(); } catch (e) {}
+    }
     TTS.speaking = false;
     TTS.currentUtterance = null;
     notifyStateChange();
+  }
+
+  // iOS unlocks speech only from inside a tap. When activation happens with
+  // no sentence to read yet, speak a silent primer in the tap so the next
+  // sentence (started by a timer) is allowed to play.
+  function unlock() {
+    if (!TTS.synth || !TTS.available) return;
+    try {
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      u.lang = TTS.voice ? TTS.voice.lang : FALLBACK_LANG;
+      if (TTS.voice) u.voice = TTS.voice;
+      TTS.synth.speak(u);
+    } catch (e) { /* best-effort */ }
   }
 
   // ---------- Settings ----------
@@ -255,7 +328,9 @@
       speaking: TTS.speaking,
       rate: TTS.rate,
       voiceName: TTS.voice ? TTS.voice.name : null,
-      voiceLang: TTS.voice ? TTS.voice.lang : null,
+      voiceLang: TTS.voice ? TTS.voice.lang : (TTS.byLanguage ? FALLBACK_LANG : null),
+      byLanguage: TTS.byLanguage,
+      loading: TTS.loading,
     };
   }
 
@@ -265,6 +340,7 @@
   TTS.isActivated = isActivated;
   TTS.speak = speak;
   TTS.cancel = cancel;
+  TTS.unlock = unlock;
   TTS.setMuted = setMuted;
   TTS.setRate = setRate;
   TTS.isEnabled = isEnabled;

@@ -364,7 +364,9 @@
     align-items: center;
     gap: 12px;
   }
-  .pillar { width: 100%; max-width: 380px; min-height: 140px; }
+  /* Stacked: size each pillar by its content (flex: 1 would split the
+     stage height and let an expanded pillar's facets spill out). */
+  .pillar { flex: 0 0 auto; width: 100%; max-width: 380px; min-height: 140px; }
   .pillar.expanded { min-height: 240px; }
   .pillars-arch { width: 90%; }
   .pillar-label { font-size: 18px; }

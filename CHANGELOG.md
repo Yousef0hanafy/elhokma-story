@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed (mobile)
+- The cinematic black bars were drawn over the topbar, hiding the scene menu and the audio buttons on every scene (and over drawers and dialogs). They now sit below the topbar and are dropped on phones.
+- The opening title «رحلة الحوكمة» never appeared (it was typed into an invisible heading).
+- The narrator portrait covered scene titles and content on phones; it now sits small beside the subtitles.
+- The subtitle bar no longer covers the bottom of drawers and dialogs; toasts show above them.
+- The review-mode banner showed through the topbar when not in review mode.
+- Stacked pillars (scene 4) on phones: an opened pillar's points spilled outside its card.
+- iPhone notch / home bar: topbar and subtitles respect the safe areas.
+
+### Fixed (narration audio)
+- A voice that finished loading after the audio card opened (common on phones) left the card saying "unavailable" forever. The card now shows a loading state and refreshes.
+- Turning audio on now reads the sentence on screen immediately, inside the tap (iOS only allows speech started by a tap).
+- Android engines that list no voices are asked for Arabic by language; if they cannot, the course says so and continues with subtitles.
+- No `cancel()` right before `speak()` unless something is playing (Android could drop the new sentence); a watchdog stops the narration from stalling when an engine never reports the end of a sentence.
+- When no Arabic voice exists, the card tells Android / iPhone users where to add one.
+
+### Changed
+- Service worker cache bumped to `elhokma-v4` so installed copies pick up the new CSS.
+
 ## [1.1.0] — 2026-10-12
 
 ### Fixed (critical)
