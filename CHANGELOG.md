@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed (mobile)
+- The cinematic black bars were drawn over the topbar, hiding the scene menu and the audio buttons on every scene (and over drawers and dialogs). They now sit below the topbar and are dropped on phones.
+- The opening title «رحلة الحوكمة» never appeared (it was typed into an invisible heading).
+- The narrator portrait covered scene titles and content on phones; it now sits small beside the subtitles.
+- The subtitle bar no longer covers the bottom of drawers and dialogs; toasts show above them.
+- The review-mode banner showed through the topbar when not in review mode.
+- Stacked pillars (scene 4) on phones: an opened pillar's points spilled outside its card.
+- iPhone notch / home bar: topbar and subtitles respect the safe areas.
+
+### Fixed (narration audio)
+- A voice that finished loading after the audio card opened (common on phones) left the card saying "unavailable" forever. The card now shows a loading state and refreshes.
+- Turning audio on now reads the sentence on screen immediately, inside the tap (iOS only allows speech started by a tap).
+- Android engines that list no voices are asked for Arabic by language; if they cannot, the course says so and continues with subtitles.
+- No `cancel()` right before `speak()` unless something is playing (Android could drop the new sentence); a watchdog stops the narration from stalling when an engine never reports the end of a sentence.
+- When no Arabic voice exists, the card tells Android / iPhone users where to add one.
+
+### Added
+- Recorded Arabic narration (`audio/`, 57 MP3 files, ~1.3 MB) so the course speaks on every phone, including ones without an Arabic voice. The device voice is only a fallback for a missing file. The current voice is a free placeholder (CC BY-NC-SA, non-commercial); replace it before commercial use (see `audio/LICENSE.txt`).
+- `scripts/generate-narration.py` regenerates the MP3s and the file lists from `content.js`.
+
+### Fixed (round 2)
+- Audio playback on iPhone: one `<audio>` element is unlocked by the first tap and reused, so later segments are not blocked by autoplay rules.
+- The service worker no longer intercepts MP3 / range requests (Safari needs real range responses to play audio).
+- Grammar: «ويُبنى الثقة» → «وتُبنى الثقة».
+- Phones: seat and star labels were ~5px on screen; they are now readable. Toasts show as a slim banner under the topbar instead of covering seats and feedback. Header buttons are 40px on touch screens.
+- `npm run check:files` verifies every narration file exists and is packaged.
+
+### Changed
+- Service worker cache bumped to `elhokma-v5` so installed copies pick up the new files.
+
 ## [1.1.0] — 2026-10-12
 
 ### Fixed (critical)

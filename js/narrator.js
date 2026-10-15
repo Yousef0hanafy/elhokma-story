@@ -273,6 +273,18 @@
     }
   }
 
+  // Reads the sentence currently on screen aloud. Used when the learner
+  // turns audio on mid-sentence, so they hear it now instead of silence
+  // until the next one — and so the first utterance happens inside their
+  // tap, which iOS requires. Returns true if a sentence was sent.
+  function speakCurrent() {
+    if (!Narrator.isPlaying || Narrator.isPaused || Narrator.currentIndex < 0) return false;
+    const seg = Narrator.segments[Narrator.currentIndex];
+    if (!seg) return false;
+    speak(seg.text, Narrator.currentIndex);
+    return isSpeaking();
+  }
+
   function showNarrator() {
     const $n = $narratorOverlay();
     if ($n) {
@@ -308,6 +320,7 @@
   Narrator.stop = stop;
   Narrator.replay = replay;
   Narrator.togglePause = togglePause;
+  Narrator.speakCurrent = speakCurrent;
   Narrator.showNarrator = showNarrator;
   Narrator.hideNarrator = hideNarrator;
   Narrator.startSpeaking = startSpeaking;

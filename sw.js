@@ -22,7 +22,7 @@
  * APP_SHELL must list every runtime file; `npm run check:files` enforces it.
  * Bump CACHE_VERSION on every release.
  */
-const CACHE_VERSION = 'elhokma-v3';
+const CACHE_VERSION = 'elhokma-v5';
 const APP_SHELL = [
   './',
   './index.html',
@@ -100,6 +100,10 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  // Narration audio goes straight to the network: media elements send
+  // Range requests, and answering them from a cached full response breaks
+  // playback in Safari/iOS.
+  if (url.pathname.endsWith('.mp3') || req.headers.has('range')) return;
 
   const isNetworkFirst = NETWORK_FIRST.some(ext => url.pathname.endsWith(ext));
 

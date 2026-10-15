@@ -7,7 +7,7 @@
  * Run:  npm run test:e2e
  * Uses PLAYWRIGHT_CHROMIUM_PATH if set (e.g. a preinstalled Chromium).
  */
-const { chromium } = require('playwright');
+const { chromium, devices } = require('playwright');
 const { test, assert, assertEqual, run } = require('../harness');
 const { start } = require('./server');
 const { installMockLms } = require('./mock-lms');
@@ -16,7 +16,13 @@ let server, baseUrl, browser;
 
 // A fake Arabic Web Speech voice whose every utterance takes `durationMs`.
 // Logs start / end / cancel with timestamps to window.__speech.
-function installFakeSpeech(durationMs) {
+// `opts` is the duration in ms, or { ms, voices, error }: `voices` replaces
+// the voice list (e.g. [] for an engine that lists none) and `error` makes
+// every utterance fail with that error code.
+function installFakeSpeech(opts) {
+  const { ms: durationMs, voices = [{ name: 'Test Arabic', lang: 'ar-SA' }], error = null, voicesAfterMs = 0 } =
+    typeof opts === 'number' ? { ms: opts } : opts;
+  const bootedAt = Date.now();
   const log = [];
   window.__speech = log;
   let timers = [];
@@ -24,7 +30,11 @@ function installFakeSpeech(durationMs) {
   function next() {
     const u = queue.shift();
     if (!u) return;
-    log.push({ type: 'start', text: u.text, t: Date.now() });
+    log.push({ type: 'start', text: u.text, lang: u.lang, t: Date.now() });
+    if (error) {
+      timers.push(setTimeout(() => { if (u.onerror) u.onerror({ error }); next(); }, 10));
+      return;
+    }
     timers.push(setTimeout(() => {
       log.push({ type: 'end', text: u.text, t: Date.now() });
       if (u.onend) u.onend({});
@@ -33,7 +43,8 @@ function installFakeSpeech(durationMs) {
   }
   window.SpeechSynthesisUtterance = function (text) { this.text = text; };
   const synth = {
-    getVoices: () => [{ name: 'Test Arabic', lang: 'ar-SA' }],
+    // `voicesAfterMs`: the list stays empty for a while, as on many phones.
+    getVoices: () => (Date.now() - bootedAt >= voicesAfterMs ? voices : []),
     speak(u) { queue.push(u); if (queue.length === 1 && !synth._busy) { synth._busy = true; next(); } },
     cancel() {
       if (timers.length || queue.length) log.push({ type: 'cancel', t: Date.now() });
@@ -47,13 +58,26 @@ function installFakeSpeech(durationMs) {
   Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true });
 }
 
-async function newPage({ lms = true, reducedMotion = true, speechMs = 0 } = {}) {
-  const context = await browser.newContext({ reducedMotion: reducedMotion ? 'reduce' : 'no-preference' });
+// Removes the recorded-narration manifest so a test exercises browser TTS.
+function disableRecordedNarration() {
+  let content;
+  Object.defineProperty(window, 'STORY_CONTENT', {
+    configurable: true,
+    get: () => content,
+    set: v => { if (v && v.audio) v.audio.narration = {}; content = v; },
+  });
+}
+
+async function newPage({ lms = true, reducedMotion = true, speechMs = 0, speech = null, device = null, recorded } = {}) {
+  // Tests that fake a TTS voice test TTS: no recorded audio unless asked.
+  if (recorded === undefined) recorded = !(speechMs || speech);
+  const context = await browser.newContext({ ...(device || {}), reducedMotion: reducedMotion ? 'reduce' : 'no-preference' });
   // Block third-party requests: the course must work fully offline / inside
   // a locked-down hospital network.
   await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, route => route.abort());
   if (lms) await context.addInitScript(installMockLms);
-  if (speechMs) await context.addInitScript(installFakeSpeech, speechMs);
+  if (speechMs || speech) await context.addInitScript(installFakeSpeech, speech || speechMs);
+  if (!recorded) await context.addInitScript(disableRecordedNarration);
   const page = await context.newPage();
   page.errors = [];
   page.on('pageerror', e => page.errors.push('PageError: ' + e.message));
@@ -356,11 +380,40 @@ test('Fonts are self-hosted and load; no service worker inside an LMS', async ()
   await page.context().close();
 });
 
-test('Without an Arabic voice, the audio card says so instead of pretending', async () => {
+test('Recorded narration: one tap starts the sentence on screen, then each segment plays in turn', async () => {
   const page = await newPage();
   await open(page);
   await page.waitForSelector('#tts-activation.visible');
-  await page.waitForTimeout(5500); // TTS polls for voices for up to 5s
+  assert(!(await page.isHidden('#tts-activate-btn')), 'activate button offered at once (no voice to wait for)');
+  assert((await page.textContent('#tts-activation-status')).includes('مسجّل'), 'card says recorded narration');
+  await page.waitForFunction(() => window.Narrator && window.Narrator.isPlaying && document.getElementById('subtitle-text').textContent.length > 0);
+  const inTap = await page.evaluate(() => {
+    document.getElementById('tts-activate-btn').click();
+    const a = window.AudioProvider.el;
+    return { src: a && a.src, playing: a && !a.paused };
+  });
+  assert(/audio\/opening\/seg-\d+\.mp3$/.test(inTap.src), 'segment audio loaded in the tap: ' + inTap.src);
+  assert(inTap.playing, 'play() called inside the tap');
+  const first = inTap.src;
+  await page.waitForFunction(f => window.AudioProvider.el.src !== f && /seg-\d+\.mp3$/.test(window.AudioProvider.el.src), first, { timeout: 15000 });
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('A missing narration file falls back to the device voice for that sentence', async () => {
+  const page = await newPage({ speech: { ms: 300 }, recorded: true });
+  await page.context().route(/\.mp3$/, route => route.fulfill({ status: 404, body: '' }));
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
+  await page.click('#tts-activate-btn');
+  await page.waitForFunction(() => window.__speech.some(e => e.type === 'start'), null, { timeout: 10000 });
+  await page.context().close();
+});
+
+test('Without an Arabic voice, the audio card says so instead of pretending', async () => {
+  const page = await newPage({ speech: { ms: 500, voices: [{ name: 'English', lang: 'en-US' }] } });
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
   assert(await page.evaluate(() => document.getElementById('tts-activate-btn').hidden), 'activate button hidden');
   assert((await page.textContent('#tts-activation-title')).includes('غير متاح'), 'card says audio unavailable');
   await page.context().close();
@@ -401,6 +454,104 @@ test('Mute and speed survive a reload, and the topbar shows them', async () => {
   assertEqual(st.muted, true, 'muted persisted');
   assertEqual(st.rate, 1.25, 'rate persisted');
   assertEqual(await page.textContent('#tts-rate-label'), '١.٢٥×', 'rate label matches');
+  await page.context().close();
+});
+
+// What a learner can actually tap at the centre of an element.
+const topElementIs = (page, sel) => page.evaluate(s => {
+  const el = document.querySelector(s);
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return !!hit && (hit === el || el.contains(hit));
+}, sel);
+
+test('Phone: the topbar is not hidden under the black bars, and the title shows', async () => {
+  const page = await newPage({ device: devices['Pixel 7'], reducedMotion: false });
+  await open(page);
+  await dismissAudioOverlay(page);
+  await page.waitForFunction(() => document.body.classList.contains('cinematic'));
+  await page.waitForTimeout(2500); // past the title's typewriter start
+  for (const sel of ['#menu-toggle', '#hub-toggle', '#tts-toggle', '#tts-rate']) {
+    assert(await topElementIs(page, sel), sel + ' is visible and tappable');
+  }
+  const bars = await page.evaluate(() => document.getElementById('letterbox-top').getBoundingClientRect().height);
+  assertEqual(bars, 0, 'no cinematic bars on a phone');
+  assert(await page.evaluate(() => getComputedStyle(document.getElementById('hero-title')).opacity === '1'), 'opening title is visible');
+  // The narrator portrait sits by the subtitles, not over the scene content.
+  const overlap = await page.evaluate(() => {
+    const a = document.getElementById('narrator-overlay').getBoundingClientRect();
+    const b = document.getElementById('subtitle-bar').getBoundingClientRect();
+    return a.top >= b.top - 30;
+  });
+  assert(overlap, 'narrator docked by the subtitle bar');
+  // The scene drawer is not covered by the subtitle bar.
+  await page.click('#menu-toggle');
+  await page.waitForSelector('#scene-drawer.visible');
+  await page.waitForTimeout(400);
+  assert(await topElementIs(page, '#scene-drawer-restart'), 'drawer restart button not covered');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('Desktop: the topbar stays on top of the cinematic bars', async () => {
+  const page = await newPage({ reducedMotion: false });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await open(page);
+  await dismissAudioOverlay(page);
+  await page.waitForFunction(() => document.body.classList.contains('cinematic'));
+  await page.waitForTimeout(1200);
+  assert(await topElementIs(page, '#tts-toggle'), 'audio toggle visible above the letterbox');
+  await page.context().close();
+});
+
+test('Turning audio on reads the sentence on screen right away, inside the tap', async () => {
+  const page = await newPage({ speechMs: 3000 });
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
+  await page.waitForFunction(() => !document.getElementById('tts-activate-btn').hidden);
+  await page.waitForFunction(() => document.getElementById('subtitle-text').textContent.length > 0);
+  const onScreen = await page.textContent('#subtitle-text');
+  // Same task as the click: no timer may run between the tap and speak().
+  const startedInTap = await page.evaluate(() => {
+    document.getElementById('tts-activate-btn').click();
+    return window.__speech.filter(e => e.type === 'start').map(e => e.text);
+  });
+  assertEqual(startedInTap.length, 1, 'one sentence started synchronously in the tap');
+  assert(onScreen.startsWith(startedInTap[0].slice(0, 10)), 'it is the sentence on screen');
+  await page.context().close();
+});
+
+test('A voice that loads after the audio card opened still enables audio', async () => {
+  const page = await newPage({ speech: { ms: 500, voicesAfterMs: 2500 } });
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
+  assert(!(await page.textContent('#tts-activation-title')).includes('غير متاح'), 'card does not claim "unavailable" while voices load');
+  await page.waitForFunction(() => !document.getElementById('tts-activate-btn').hidden, null, { timeout: 6000 });
+  await page.context().close();
+});
+
+test('An engine that lists no voices is asked for Arabic by language', async () => {
+  const page = await newPage({ speech: { ms: 500, voices: [] } });
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
+  await page.waitForFunction(() => !document.getElementById('tts-activate-btn').hidden, null, { timeout: 8000 });
+  await page.click('#tts-activate-btn');
+  await page.waitForFunction(() => window.__speech.some(e => e.type === 'start'));
+  const first = await page.evaluate(() => window.__speech.find(e => e.type === 'start'));
+  assertEqual(first.lang, 'ar-SA', 'utterance asks for Arabic');
+  assertEqual(page.errors.length, 0, page.errors.join('\n'));
+  await page.context().close();
+});
+
+test('If that engine cannot speak Arabic, the course says so and goes subtitles-only', async () => {
+  const page = await newPage({ speech: { ms: 500, voices: [], error: 'language-unavailable' } });
+  await open(page);
+  await page.waitForSelector('#tts-activation.visible');
+  await page.waitForFunction(() => !document.getElementById('tts-activate-btn').hidden, null, { timeout: 8000 });
+  await page.click('#tts-activate-btn');
+  await page.waitForFunction(() => window.NarrationManager.getState().available === null);
+  await page.waitForFunction(() => document.getElementById('toast').textContent.includes('النطق العربي'));
+  assertEqual(await page.textContent('#tts-icon'), '🔇', 'topbar shows audio unavailable');
   await page.context().close();
 });
 

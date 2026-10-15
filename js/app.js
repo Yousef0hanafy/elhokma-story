@@ -472,14 +472,26 @@
     const activateBtn = document.getElementById('tts-activate-btn');
     const skipBtn = document.getElementById('tts-skip-btn');
 
-    let lastAvailable = null;
+    // `undefined` = no state seen yet. (It used to start at null, which is
+    // also the "no audio" value, so a voice that loaded after the card
+    // opened never refreshed it and the card kept saying "unavailable".)
+    let lastAvailable;
+    let lastLoading;
     NM.onStateChange((s) => {
       const available = !!s.available;
+      const loading = !!(window.TTS && TTS.getState().loading);
       // Voices load asynchronously: if the activation card is already open
       // when a voice turns up (or turns out missing), refresh what it says.
       const overlay = document.getElementById('tts-activation');
-      if (lastAvailable !== null && s.available !== lastAvailable && overlay && overlay.classList.contains('visible')) {
+      const changed = s.available !== lastAvailable || loading !== lastLoading;
+      if (lastAvailable !== undefined && changed && overlay && overlay.classList.contains('visible')) {
         showTTSActivationOverlay();
+      }
+      lastLoading = loading;
+      // The device's engine turned out unable to speak Arabic after the
+      // learner switched audio on: say so once instead of staying silent.
+      if (lastAvailable && !s.available && s.activated && !s.muted) {
+        showToast('لا يدعم جهازك النطق العربي، المتابعة بالترجمة النصية', 'warning');
       }
       lastAvailable = s.available;
       if (ttsToggle) {
@@ -503,6 +515,7 @@
         if (!s.available) { showTTSActivationOverlay('unavailable'); return; }
         if (!s.activated) { showTTSActivationOverlay(); return; }
         NM.setMuted(!s.muted);
+        if (s.muted) unlockNarration();
         showToast(s.muted ? 'تم تفعيل السرد الصوتي' : 'تم كتم السرد الصوتي', 'success');
       });
     }
@@ -527,6 +540,7 @@
         // Activate narration (this click is the required user gesture)
         NM.activate();
         if (NM.getState().muted) NM.setMuted(false);
+        unlockNarration();
         showToast('تم تفعيل السرد الصوتي', 'success');
       });
     }
@@ -537,6 +551,17 @@
         showToast('المتابعة بالترجمة النصية', 'success');
       });
     }
+  }
+
+  // Runs inside the learner's tap. Reads the sentence on screen right away
+  // (otherwise audio would only start with the next one), or, between
+  // sentences, plays a silent primer: iOS only allows speech that a tap
+  // started first.
+  function unlockNarration() {
+    if (Narrator.speakCurrent()) return;
+    const available = NarrationManager.getState().available;
+    if (available === 'audio' && window.AudioProvider) AudioProvider.unlock();
+    if (window.TTS && TTS.unlock && available === 'tts') TTS.unlock();
   }
 
   // ---------- TTS Activation Overlay ----------
@@ -551,10 +576,16 @@
     const s = window.NarrationManager ? NarrationManager.getState() : { available: null };
     const ttsState = window.TTS ? TTS.getState() : {};
 
-    if (mode === 'unavailable' || !s.available) {
+    if (!s.available && ttsState.loading && mode !== 'unavailable') {
+      // Phones can take a few seconds to list their voices.
+      title.textContent = 'السرد الصوتي العربي';
+      desc.textContent = 'جارٍ تجهيز الصوت العربي على جهازك… يمكنك أيضاً المتابعة بالترجمة النصية فقط.';
+      if (activateBtn) activateBtn.hidden = true;
+      if (status) status.textContent = '';
+    } else if (mode === 'unavailable' || !s.available) {
       // No recorded audio and no Arabic voice on this device: subtitles only.
       title.textContent = 'السرد الصوتي غير متاح';
-      desc.textContent = 'متصفحك لا يدعم السرد الصوتي العربي. ستظهر الترجمة النصية تلقائياً. يمكنك المتابعة دون صوت.';
+      desc.textContent = 'متصفحك لا يدعم السرد الصوتي العربي. ستظهر الترجمة النصية تلقائياً. يمكنك المتابعة دون صوت.' + voiceInstallHint();
       if (activateBtn) activateBtn.hidden = true;
       if (status) status.textContent = 'يمكنك المتابعة بالنقر على الزر أدناه';
     } else {
@@ -564,7 +595,9 @@
       if (status) {
         status.textContent = s.available === 'audio'
           ? 'سرد صوتي مسجّل'
-          : `الصوت المتاح: ${ttsState.voiceName || 'عربي'} (${ttsState.voiceLang || 'ar'})`;
+          : ttsState.byLanguage
+            ? 'سيُستخدم صوت الجهاز العربي'
+            : `الصوت المتاح: ${ttsState.voiceName || 'عربي'} (${ttsState.voiceLang || 'ar'})`;
       }
     }
 
@@ -572,6 +605,14 @@
     overlay.inert = false;
     const focusTarget = activateBtn && !activateBtn.hidden ? activateBtn : document.getElementById('tts-skip-btn');
     if (focusTarget) focusTarget.focus();
+  }
+
+  // Where to add an Arabic voice on the learner's own device.
+  function voiceInstallHint() {
+    const ua = navigator.userAgent || '';
+    if (/Android/i.test(ua)) return ' لإضافته: ثبّت «خدمات النطق من Google» وفعّل اللغة العربية من إعدادات تحويل النص إلى كلام، ثم أعد تحميل الصفحة.';
+    if (/iPhone|iPad|iPod|Macintosh/i.test(ua) && 'ontouchend' in document) return ' لإضافته: الإعدادات ← تسهيلات الاستخدام ← المحتوى المنطوق ← الأصوات ← العربية، ثم أعد تحميل الصفحة.';
+    return '';
   }
 
   function hideTTSActivationOverlay() {
@@ -877,7 +918,9 @@
     } else {
       tl.push({ time: 0.0, fn: () => document.getElementById('eyebrow').classList.add('anim-fade-up') });
       tl.push({ time: 1.0, fn: () => {
-        // Typewriter title
+        // Typewriter title. The heading starts at opacity 0 (like every
+        // animated element), so reveal it before typing into it.
+        document.getElementById('hero-title').style.opacity = '1';
         typeTitle(document.getElementById('hero-title'), 'رحلة ' + scene.hero_title_accent, 60, () => {
           // Highlight accent after typing completes
           const titleEl = document.getElementById('hero-title');

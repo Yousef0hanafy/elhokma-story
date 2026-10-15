@@ -79,6 +79,67 @@
       <file href="js/animator.js"/>
       <file href="js/modal-manager.js"/>
       <file href="js/app.js"/>
+      <!-- BEGIN generated narration -->
+      <file href="audio/opening/seg-0.mp3"/>
+      <file href="audio/opening/seg-1.mp3"/>
+      <file href="audio/opening/seg-2.mp3"/>
+      <file href="audio/opening/seg-3.mp3"/>
+      <file href="audio/opening/seg-4.mp3"/>
+      <file href="audio/opening/seg-5.mp3"/>
+      <file href="audio/opening/seg-6.mp3"/>
+      <file href="audio/opening/seg-7.mp3"/>
+      <file href="audio/opening/seg-8.mp3"/>
+      <file href="audio/boardroom/seg-0.mp3"/>
+      <file href="audio/boardroom/seg-1.mp3"/>
+      <file href="audio/boardroom/seg-2.mp3"/>
+      <file href="audio/boardroom/seg-3.mp3"/>
+      <file href="audio/boardroom/seg-4.mp3"/>
+      <file href="audio/boardroom/seg-5.mp3"/>
+      <file href="audio/boardroom/seg-6.mp3"/>
+      <file href="audio/boardroom/seg-7.mp3"/>
+      <file href="audio/boardroom/seg-8.mp3"/>
+      <file href="audio/boardroom/seg-9.mp3"/>
+      <file href="audio/framework/seg-0.mp3"/>
+      <file href="audio/framework/seg-1.mp3"/>
+      <file href="audio/framework/seg-2.mp3"/>
+      <file href="audio/framework/seg-3.mp3"/>
+      <file href="audio/framework/seg-4.mp3"/>
+      <file href="audio/framework/seg-5.mp3"/>
+      <file href="audio/framework/seg-6.mp3"/>
+      <file href="audio/framework/seg-7.mp3"/>
+      <file href="audio/framework/seg-8.mp3"/>
+      <file href="audio/framework/seg-9.mp3"/>
+      <file href="audio/pillars/seg-0.mp3"/>
+      <file href="audio/pillars/seg-1.mp3"/>
+      <file href="audio/pillars/seg-2.mp3"/>
+      <file href="audio/pillars/seg-3.mp3"/>
+      <file href="audio/pillars/seg-4.mp3"/>
+      <file href="audio/pillars/seg-5.mp3"/>
+      <file href="audio/pillars/seg-6.mp3"/>
+      <file href="audio/pillars/seg-7.mp3"/>
+      <file href="audio/court/seg-0.mp3"/>
+      <file href="audio/court/seg-1.mp3"/>
+      <file href="audio/court/seg-2.mp3"/>
+      <file href="audio/court/seg-3.mp3"/>
+      <file href="audio/court/seg-4.mp3"/>
+      <file href="audio/court/seg-5.mp3"/>
+      <file href="audio/integrity/seg-0.mp3"/>
+      <file href="audio/integrity/seg-1.mp3"/>
+      <file href="audio/integrity/seg-2.mp3"/>
+      <file href="audio/integrity/seg-3.mp3"/>
+      <file href="audio/integrity/seg-4.mp3"/>
+      <file href="audio/integrity/seg-5.mp3"/>
+      <file href="audio/integrity/seg-6.mp3"/>
+      <file href="audio/integrity/seg-7.mp3"/>
+      <file href="audio/dilemma/seg-0.mp3"/>
+      <file href="audio/dilemma/seg-1.mp3"/>
+      <file href="audio/dilemma/seg-2.mp3"/>
+      <file href="audio/dilemma/seg-3.mp3"/>
+      <file href="audio/dilemma/seg-4.mp3"/>
+      <file href="audio/dilemma/seg-5.mp3"/>
+      <file href="audio/silence.mp3"/>
+      <file href="audio/LICENSE.txt"/>
+      <!-- END generated narration -->
     </resource>
   </resources>
 

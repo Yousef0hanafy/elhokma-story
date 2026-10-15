@@ -364,7 +364,9 @@
     align-items: center;
     gap: 12px;
   }
-  .pillar { width: 100%; max-width: 380px; min-height: 140px; }
+  /* Stacked: size each pillar by its content (flex: 1 would split the
+     stage height and let an expanded pillar's facets spill out). */
+  .pillar { flex: 0 0 auto; width: 100%; max-width: 380px; min-height: 140px; }
   .pillar.expanded { min-height: 240px; }
   .pillars-arch { width: 90%; }
   .pillar-label { font-size: 18px; }
@@ -772,9 +774,11 @@
 
 @media (max-width: 640px) {
   .integrity-stage { max-width: 100%; }
-  .star-icon { font-size: 14px; }
-  .star-label { font-size: 9px; }
-  .star-center .star-icon { font-size: 18px; }
+  /* The SVG scales down on phones; larger SVG units keep labels legible. */
+  .star-icon { font-size: 20px; }
+  .star-label { font-size: 15px; }
+  .star-center .star-icon { font-size: 24px; }
+  .star-center .star-label { font-size: 16px; }
   .framework-cycle { gap: 4px; padding: 10px; }
   .cycle-step { min-width: 60px; }
   .cycle-step-num { width: 28px; height: 28px; font-size: 12px; }

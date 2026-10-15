@@ -39,7 +39,7 @@ For "what does each file do", see the README architecture tree. For "how to depl
 | Module | Owns | Key invariant |
 |--------|------|---------------|
 | `narration-manager.js` | Provider selection + fallback | Picks first available provider per `speak()` call |
-| `audio-provider.js` | Professional MP3 playback (priority 1) | Cleans up `<audio>` elements on end/error to prevent leaks |
+| `audio-provider.js` | Recorded MP3 playback (priority 1) | Reuses one `<audio>` element, unlocked by the first tap so iOS lets later segments play |
 | `tts-provider.js` | Browser TTS adapter (priority 2) | Thin wrapper over `tts.js`; delegates to existing TTS module |
 | `tts.js` | Web Speech API engine | Handles voice loading, activation, rate/mute |
 
@@ -181,6 +181,17 @@ The narrator keeps a single pending step (`{fn, due}`) instead of one `setTimeou
 That's it. No other files need changes.
 
 ### How to add professional narration
+
+The course ships recorded narration in `audio/` (generated with a free Piper voice, see `audio/LICENSE.txt`) because many phones have no Arabic text-to-speech voice. To regenerate it after editing narration text, or with another voice:
+
+```bash
+python3 -m pip install piper-tts      # plus ffmpeg and node on PATH
+python3 scripts/generate-narration.py --voice path/to/voice.onnx
+```
+
+The script writes the MP3s and rewrites the generated blocks in `content.js`, `imsmanifest.xml` and `scripts/build-scorm.sh`; `npm run check:files` fails if any listed file is missing. Spoken-form fixes (abbreviations, numbers) live in its `PRONUNCIATION` table.
+
+To use studio recordings instead:
 
 1. Record each narration segment as a separate MP3 file.
 2. Place files in `audio/<sceneId>/seg-<index>.mp3` (0-indexed).
